@@ -1,2 +1,127 @@
 # mock-mcp
-An MCP server for mock data
+
+An end-to-end mock data workflow for integration tests powered by the Model Context Protocol (MCP).  
+It pairs a WebSocket bridge that batches live test requests with an MCP server that exposes tooling to any compatible AI client (Cursor, Claude Desktop, custom clients, etc.).
+
+## Features
+
+- **Batch-aware test client** – collects every network interception inside the same macrotask and pauses the test until mock data arrives.
+- **MCP tooling** – `get_pending_batches` and `provide_batch_mock_data` describe the current test state and accept AI-generated payloads.
+- **WebSocket bridge** – keeps the test runner, the MCP server, and the AI client decoupled while supporting multiple concurrent runs.
+- **Timeouts, TTLs, and cleanup** – protects the test runner from stale batches or disconnected clients.
+
+## Architecture Overview
+
+1. Tests call `BatchMockCollector.requestMock()` whenever they intercept an HTTP request (e.g., via Playwright/Puppeteer routing).
+2. Requests issued during the same macrotask are sent to the `TestMockMCPServer` through a WebSocket batch message.
+3. The server exposes pending batches to the MCP client through tooling; the AI generates context-aware responses.
+4. AI-provided mock data is routed back through the WebSocket bridge, resolving the pending promises inside the test.
+
+## Quick Start
+
+```bash
+pnpm install # or npm install / yarn install
+pnpm build   # compiles TypeScript and bundles the client helper
+pnpm start   # runs the CLI (defaults to ws://localhost:8080)
+```
+
+### CLI flags and env
+
+| Option            | Description                                                        | Default |
+| ----------------- | ------------------------------------------------------------------ | ------- |
+| `--port`, `-p`    | WebSocket port for test runners                                    | `8080`  |
+| `--no-stdio`      | Disable the MCP stdio transport (useful for local debugging/tests) | enabled |
+| `MCP_SERVER_PORT` | Same as `--port`                                                   | `8080`  |
+
+The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down gracefully.
+
+### Connecting an MCP client (Cursor example)
+
+Add the server to your MCP client configuration:
+
+```jsonc
+{
+  "mcpServers": {
+    "mock-mcp": {
+      "command": "node",
+      "args": ["/absolute/path/to/dist/index.js"],
+      "env": {
+        "MCP_SERVER_PORT": "8080"
+      }
+    }
+  }
+}
+```
+
+Restart the client—you should see the `mock-mcp` server with two tools available.
+
+## Using the Batch Client in Tests
+
+```ts
+// tests/mocks.ts
+import { connect } from "mock-mcp";
+
+const mockClient = await connect({
+  wsUrl: "ws://127.0.0.1:8080",
+  timeoutMs: 60_000,
+});
+
+await page.route("**/api/users", async (route) => {
+  const url = new URL(route.request().url());
+  const data = await mockClient.requestMock(
+    url.pathname,
+    route.request().method()
+  );
+
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(data),
+  });
+});
+```
+
+Batch behaviour is automatic—any additional `requestMock` calls issued in the same macrotask are grouped before being forwarded to the server.
+
+## MCP Tools
+
+| Tool                      | Purpose                                    | Response                                                |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| `get_pending_batches`     | Lists queued batches with request metadata | JSON string (array of `{batchId, timestamp, requests}`) |
+| `provide_batch_mock_data` | Sends mock payloads for a specific batch   | JSON string reporting success                           |
+
+Example payload for `provide_batch_mock_data`:
+
+```jsonc
+{
+  "batchId": "batch-3",
+  "mocks": [
+    {
+      "requestId": "req-7",
+      "data": { "users": [{ "id": 1, "name": "Alice" }] }
+    }
+  ]
+}
+```
+
+## Library API
+
+- `TestMockMCPServer` – start/stop the WebSocket + MCP tooling bridge programmatically.
+- `BatchMockCollector` – low-level batching client used by the test runner.
+- `connect(options)` – convenience helper that instantiates `BatchMockCollector` and waits for the WebSocket connection to open.
+
+Both classes accept logger overrides, timeout tweaks, and other ergonomics surfaced in the technical design.
+
+## Development & Testing
+
+```bash
+pnpm test        # runs Vitest suites
+pnpm dev         # tsx watch mode for the CLI
+pnpm lint        # eslint --ext .ts
+```
+
+Vitest suites spin up ephemeral WebSocket servers, so avoid running them concurrently with an already running instance on the same port.
+
+## License
+
+MIT
