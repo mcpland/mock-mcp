@@ -23,10 +23,48 @@ It pairs a WebSocket bridge that batches live test requests with an MCP server t
 
 ## Quick Start
 
+**Step 1: Install**
+
 ```bash
-pnpm install # or npm install / yarn install
-pnpm build   # compiles TypeScript and bundles the client helper
-pnpm start   # runs the CLI (defaults to ws://localhost:3002)
+npm install -D mock-mcp
+```
+
+**Step 2: Configure Model Context Protocol (MCP) server** (e.g., in Claude Desktop config):
+
+```json
+{
+  "mock-mcp": {
+    "command": "npx",
+    "args": ["-y", "mock-mcp@latest"]
+  }
+}
+```
+
+**Step 3: Connect from your test:**
+
+```ts
+import { render, screen, fireEvent } from "@testing-library/react";
+import { connect } from "mock-mcp";
+
+it("example", async () => {
+  const mockClient = await connect();
+  // mock user with id 1
+  fetchMock.get("/user", () =>
+    mockClient.requestMock("/user", "GET", { metadata })
+  );
+
+  const result = await fetch("/user");
+  const data = await result.json();
+  expect(data).toEqual({ id: 1 });
+}); // 10 minute timeout for AI interaction
+```
+
+**Step 4: Run with MCP enabled:**
+
+Prompt:
+
+```
+Please run the persistent test: `MOCK_MCP=true npm test test/example.test.tsx` and mock fetch data with mock-mcp
 ```
 
 ### CLI flags and env
@@ -43,12 +81,12 @@ The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down grac
 
 Add the server to your MCP client configuration:
 
-```jsonc
+```json
 {
   "mcpServers": {
     "mock-mcp": {
-      "command": "node",
-      "args": ["/absolute/path/to/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "mock-mcp@latest"],
       "env": {
         "MCP_SERVER_PORT": "3002"
       }

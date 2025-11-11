@@ -46,10 +46,3 @@ export interface ProvideBatchMockDataArgs {
   batchId: string;
   mocks: MockResponseDescriptor[];
 }
-
-export interface ToolResponseText {
-  content: Array<{
-    type: "text";
-    text: string;
-  }>;
-}

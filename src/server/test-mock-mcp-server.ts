@@ -4,12 +4,14 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { WebSocketServer, type WebSocket, type RawData } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
+import type { RawData } from "ws";
 import { type AddressInfo } from "node:net";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import packageJson from "../../package.json" assert { type: "json" };
+import packageJson from "../../package.json" with { type: "json" };
 import {
   BATCH_MOCK_REQUEST,
   BATCH_MOCK_RESPONSE,
@@ -19,7 +21,6 @@ import {
   type MockResponseDescriptor,
   type PendingBatchSummary,
   type ProvideBatchMockDataArgs,
-  type ToolResponseText,
 } from "../types.js";
 
 type Logger = Pick<Console, "log" | "warn" | "error"> & {
@@ -170,7 +171,7 @@ export class TestMockMCPServer {
    */
   async provideMockData(
     args: ProvideBatchMockDataArgs
-  ): Promise<ToolResponseText> {
+  ): Promise<CallToolResult> {
     const { batchId, mocks } = args;
     const batch = this.pendingBatches.get(batchId);
 
@@ -215,17 +216,12 @@ export class TestMockMCPServer {
       `✅ Delivered ${mocks.length} mock(s) to test process for ${batchId}`
     );
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            success: true,
-            message: `Provided mock data for ${batchId}`,
-          }),
-        },
-      ],
-    };
+    return this.buildToolResponse(
+      JSON.stringify({
+        success: true,
+        message: `Provided mock data for ${batchId}`,
+      })
+    );
   }
 
   private async startWebSocketServer(): Promise<void> {
@@ -273,10 +269,16 @@ export class TestMockMCPServer {
       return;
     }
 
+    const serverName = this.options.serverName ?? "test-mock-server";
+    const serverVersion =
+      this.options.serverVersion ??
+      (packageJson.version as string) ??
+      "0.0.0";
+
     this.mcpServer = new Server(
       {
-        name: this.options.serverName,
-        version: this.options.serverVersion,
+        name: serverName,
+        version: serverVersion,
       },
       {
         capabilities: { tools: {} },
@@ -332,23 +334,29 @@ export class TestMockMCPServer {
       ],
     }));
 
-    this.mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const toolName = request.params.name;
-      const args = (request.params.arguments ?? {}) as ProvideBatchMockDataArgs;
+    this.mcpServer.setRequestHandler(
+      CallToolRequestSchema,
+      async (request): Promise<CallToolResult> => {
+        const toolName = request.params.name;
 
-      if (toolName === "get_pending_batches") {
-        this.logger.log("📋 MCP client inspected pending batches");
-        return this.buildToolResponse(
-          JSON.stringify(this.getPendingBatches(), null, 2)
-        );
+        if (toolName === "get_pending_batches") {
+          this.logger.log("📋 MCP client inspected pending batches");
+          return this.buildToolResponse(
+            JSON.stringify(this.getPendingBatches(), null, 2)
+          );
+        }
+
+        if (toolName === "provide_batch_mock_data") {
+          const args = request.params.arguments;
+          if (!isProvideBatchMockDataArgs(args)) {
+            throw new Error("Invalid arguments for provide_batch_mock_data");
+          }
+          return this.provideMockData(args);
+        }
+
+        throw new Error(`Unknown tool: ${toolName}`);
       }
-
-      if (toolName === "provide_batch_mock_data") {
-        return this.provideMockData(args);
-      }
-
-      throw new Error(`Unknown tool: ${toolName}`);
-    });
+    );
 
     this.transport =
       this.options.transportFactory?.() ?? new StdioServerTransport();
@@ -519,7 +527,7 @@ export class TestMockMCPServer {
     return Object.keys(context).length > 0 ? context : undefined;
   }
 
-  private buildToolResponse(text: string): ToolResponseText {
+  private buildToolResponse(text: string): CallToolResult {
     return {
       content: [
         {
@@ -538,4 +546,25 @@ interface MockLogEntry {
   context?: Record<string, unknown>;
   requests: Array<MockRequestDescriptor & { mock?: MockResponseDescriptor }>;
   mocks: MockResponseDescriptor[];
+}
+
+function isProvideBatchMockDataArgs(
+  value: unknown
+): value is ProvideBatchMockDataArgs {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ProvideBatchMockDataArgs>;
+  if (typeof candidate.batchId !== "string" || !Array.isArray(candidate.mocks)) {
+    return false;
+  }
+
+  return candidate.mocks.every((mock) => {
+    if (!mock || typeof mock !== "object") {
+      return false;
+    }
+    const descriptor = mock as Partial<MockResponseDescriptor>;
+    return typeof descriptor.requestId === "string" && "data" in descriptor;
+  });
 }

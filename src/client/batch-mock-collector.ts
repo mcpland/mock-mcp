@@ -51,9 +51,9 @@ export interface RequestMockOptions {
   metadata?: Record<string, unknown>;
 }
 
-interface PendingRequest<T = unknown> {
+interface PendingRequest {
   request: MockRequestDescriptor;
-  resolve: (data: T) => void;
+  resolve: (data: unknown) => void;
   reject: (error: Error) => void;
   timeoutId: NodeJS.Timeout;
 }
@@ -144,8 +144,12 @@ export class BatchMockCollector {
 
       this.pendingRequests.set(requestId, {
         request,
-        resolve,
-        reject,
+        resolve: (data) => {
+          resolve(data as T);
+        },
+        reject: (error) => {
+          reject(error);
+        },
         timeoutId,
       });
 
