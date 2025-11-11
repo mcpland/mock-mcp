@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
 import type { AddressInfo } from "node:net";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -12,6 +12,16 @@ import {
   type BatchMockResponseMessage,
 } from "../src/types.js";
 import { TestMockMCPServer } from "../src/server/test-mock-mcp-server.js";
+
+const originalMockMcpEnv = process.env.MOCK_MCP;
+
+beforeAll(() => {
+  process.env.MOCK_MCP = "1";
+});
+
+afterAll(() => {
+  process.env.MOCK_MCP = originalMockMcpEnv;
+});
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -8,8 +8,13 @@ export type ConnectOptions = number | BatchMockCollectorOptions | undefined;
  * underlying WebSocket connection to become ready before resolving.
  */
 export const connect = async (
-  options?: ConnectOptions,
-): Promise<BatchMockCollector> => {
+  options?: ConnectOptions
+): Promise<BatchMockCollector | void> => {
+  // Check environment - skip in CI or if not explicitly enabled
+  if (!process.env.MOCK_MCP || process.env.CI) {
+    console.log("[mock-mcp] Skipping in CI/non-dev environment");
+    return;
+  }
   const resolvedOptions: BatchMockCollectorOptions =
     typeof options === "number" ? { port: options } : options ?? {};
 
