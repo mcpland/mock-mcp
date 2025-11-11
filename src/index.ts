@@ -12,7 +12,7 @@ import {
 } from "./client/batch-mock-collector.js";
 import { connect, type ConnectOptions } from "./client/connect.js";
 
-const DEFAULT_PORT = 8080;
+const DEFAULT_PORT = 3002;
 
 async function runCli() {
   const cliArgs = process.argv.slice(2);

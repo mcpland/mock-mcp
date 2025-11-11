@@ -48,7 +48,7 @@ export interface MockLogOptions {
   directory?: string;
 }
 
-const DEFAULT_PORT = 8080;
+const DEFAULT_PORT = 3002;
 const DEFAULT_BATCH_TTL_MS = 5 * 60 * 1000;
 
 /**

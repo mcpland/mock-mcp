@@ -26,16 +26,16 @@ It pairs a WebSocket bridge that batches live test requests with an MCP server t
 ```bash
 pnpm install # or npm install / yarn install
 pnpm build   # compiles TypeScript and bundles the client helper
-pnpm start   # runs the CLI (defaults to ws://localhost:8080)
+pnpm start   # runs the CLI (defaults to ws://localhost:3002)
 ```
 
 ### CLI flags and env
 
 | Option            | Description                                                        | Default |
 | ----------------- | ------------------------------------------------------------------ | ------- |
-| `--port`, `-p`    | WebSocket port for test runners                                    | `8080`  |
+| `--port`, `-p`    | WebSocket port for test runners                                    | `3002`  |
 | `--no-stdio`      | Disable the MCP stdio transport (useful for local debugging/tests) | enabled |
-| `MCP_SERVER_PORT` | Same as `--port`                                                   | `8080`  |
+| `MCP_SERVER_PORT` | Same as `--port`                                                   | `3002`  |
 
 The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down gracefully.
 
@@ -50,7 +50,7 @@ Add the server to your MCP client configuration:
       "command": "node",
       "args": ["/absolute/path/to/dist/index.js"],
       "env": {
-        "MCP_SERVER_PORT": "8080"
+        "MCP_SERVER_PORT": "3002"
       }
     }
   }
@@ -66,7 +66,7 @@ Restart the client—you should see the `mock-mcp` server with two tools availab
 import { connect } from "mock-mcp";
 
 const mockClient = await connect({
-  wsUrl: "ws://127.0.0.1:8080",
+  wsUrl: "ws://127.0.0.1:3002",
   timeoutMs: 60_000,
 });
 
