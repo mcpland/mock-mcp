@@ -169,7 +169,7 @@ export class TestMockMCPServer {
    * Send AI-generated mock data back to the corresponding test process.
    */
   async provideMockData(
-    args: ProvideBatchMockDataArgs,
+    args: ProvideBatchMockDataArgs
   ): Promise<ToolResponseText> {
     const { batchId, mocks } = args;
     const batch = this.pendingBatches.get(batchId);
@@ -199,10 +199,7 @@ export class TestMockMCPServer {
     try {
       await this.persistMockBatch(batch, mocks);
     } catch (error) {
-      this.logger.warn(
-        `Failed to persist mock batch ${batchId}:`,
-        error,
-      );
+      this.logger.warn(`Failed to persist mock batch ${batchId}:`, error);
     }
 
     const payload: BatchMockResponseMessage = {
@@ -454,7 +451,7 @@ export class TestMockMCPServer {
 
   private async persistMockBatch(
     batch: BatchRecord,
-    mocks: MockResponseDescriptor[],
+    mocks: MockResponseDescriptor[]
   ): Promise<void> {
     const mockLogOptions = this.options.mockLogOptions;
     if (!mockLogOptions?.enabled) {
@@ -463,7 +460,7 @@ export class TestMockMCPServer {
 
     const directory = path.resolve(
       process.cwd(),
-      mockLogOptions.directory ?? "logs",
+      mockLogOptions.directory ?? "logs"
     );
     await mkdir(directory, { recursive: true });
 
@@ -475,7 +472,7 @@ export class TestMockMCPServer {
 
   private buildLogEntry(
     batch: BatchRecord,
-    mocks: MockResponseDescriptor[],
+    mocks: MockResponseDescriptor[]
   ): MockLogEntry {
     const mockMap = new Map(mocks.map((mock) => [mock.requestId, mock]));
     return {
@@ -492,14 +489,14 @@ export class TestMockMCPServer {
   }
 
   private extractBatchContext(
-    requests: MockRequestDescriptor[],
+    requests: MockRequestDescriptor[]
   ): Record<string, unknown> | undefined {
     const contextKeys = ["testCaseId", "testFile", "testTitle", "testName"];
     const context: Record<string, unknown> = {};
 
     for (const key of contextKeys) {
       const requestWithValue = requests.find(
-        (request) => request.metadata && request.metadata[key] !== undefined,
+        (request) => request.metadata && request.metadata[key] !== undefined
       );
       if (requestWithValue?.metadata) {
         context[key] = requestWithValue.metadata[key];
@@ -508,14 +505,12 @@ export class TestMockMCPServer {
 
     const metadataSnapshots = requests
       .map((request) => request.metadata)
-      .filter(
-        (metadata): metadata is Record<string, unknown> => {
-          if (!metadata) {
-            return false;
-          }
-          return Object.keys(metadata).length > 0;
-        },
-      );
+      .filter((metadata): metadata is Record<string, unknown> => {
+        if (!metadata) {
+          return false;
+        }
+        return Object.keys(metadata).length > 0;
+      });
 
     if (metadataSnapshots.length > 0) {
       context.metadata = metadataSnapshots;

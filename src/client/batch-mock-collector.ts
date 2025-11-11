@@ -114,7 +114,7 @@ export class BatchMockCollector {
   async requestMock<T = unknown>(
     endpoint: string,
     method: string,
-    options: RequestMockOptions = {},
+    options: RequestMockOptions = {}
   ): Promise<T> {
     if (this.closed) {
       throw new Error("BatchMockCollector has been closed");
@@ -137,8 +137,8 @@ export class BatchMockCollector {
         this.pendingRequests.delete(requestId);
         reject(
           new Error(
-            `Mock request timed out after ${this.timeout}ms: ${method} ${endpoint}`,
-          ),
+            `Mock request timed out after ${this.timeout}ms: ${method} ${endpoint}`
+          )
         );
       }, this.timeout);
 
@@ -188,9 +188,11 @@ export class BatchMockCollector {
 
     this.ws.on("error", (error) => {
       this.logger.error("❌ WebSocket error:", error);
-      this.readyReject?.(error instanceof Error ? error : new Error(String(error)));
+      this.readyReject?.(
+        error instanceof Error ? error : new Error(String(error))
+      );
       this.failAllPending(
-        error instanceof Error ? error : new Error(String(error)),
+        error instanceof Error ? error : new Error(String(error))
       );
     });
 
@@ -216,7 +218,7 @@ export class BatchMockCollector {
     }
 
     this.logger.debug?.(
-      `📦 Received mock data for ${parsed.mocks.length} requests (batch ${parsed.batchId})`,
+      `📦 Received mock data for ${parsed.mocks.length} requests (batch ${parsed.batchId})`
     );
 
     for (const mock of parsed.mocks) {
@@ -227,9 +229,7 @@ export class BatchMockCollector {
   private resolveRequest(mock: BatchMockResponseMessage["mocks"][number]) {
     const pending = this.pendingRequests.get(mock.requestId);
     if (!pending) {
-      this.logger.warn(
-        `Received mock for unknown request: ${mock.requestId}`,
-      );
+      this.logger.warn(`Received mock for unknown request: ${mock.requestId}`);
       return;
     }
 
@@ -279,7 +279,9 @@ export class BatchMockCollector {
   private sendBatch(requests: MockRequestDescriptor[]) {
     if (this.ws.readyState !== WebSocket.OPEN) {
       const error = new Error("WebSocket is not open");
-      requests.forEach((request) => this.rejectRequest(request.requestId, error));
+      requests.forEach((request) =>
+        this.rejectRequest(request.requestId, error)
+      );
       return;
     }
 
@@ -289,7 +291,7 @@ export class BatchMockCollector {
     };
 
     this.logger.debug?.(
-      `📤 Sending batch with ${requests.length} request(s) to MCP server`,
+      `📤 Sending batch with ${requests.length} request(s) to MCP server`
     );
     this.ws.send(JSON.stringify(payload));
   }
