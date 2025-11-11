@@ -80,7 +80,7 @@ describe("BatchMockCollector", () => {
 
     const collector = await connect({
       wsUrl,
-      timeoutMs: 1_000,
+      timeout: 1_000,
       batchDebounceMs: 0,
     });
 
