@@ -10,9 +10,11 @@ export type ConnectOptions = number | BatchMockCollectorOptions | undefined;
 export const connect = async (
   options?: ConnectOptions
 ): Promise<BatchMockCollector | void> => {
-  // Check environment - skip in CI or if not explicitly enabled
-  if (!process.env.MOCK_MCP || process.env.CI) {
-    console.log("[mock-mcp] Skipping in CI/non-dev environment");
+  const isEnabled =
+    process.env.MOCK_MCP !== undefined && process.env.MOCK_MCP !== "0";
+
+  if (!isEnabled) {
+    console.log("[mock-mcp] Skipping (set MOCK_MCP=1 to enable)");
     return;
   }
   const resolvedOptions: BatchMockCollectorOptions =
