@@ -7,6 +7,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { WebSocketServer, type WebSocket, type RawData } from "ws";
 import { type AddressInfo } from "node:net";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import packageJson from "../../package.json" assert { type: "json" };
 import {
   BATCH_MOCK_REQUEST,
@@ -14,6 +16,7 @@ import {
   type BatchMockRequestMessage,
   type BatchMockResponseMessage,
   type MockRequestDescriptor,
+  type MockResponseDescriptor,
   type PendingBatchSummary,
   type ProvideBatchMockDataArgs,
   type ToolResponseText,
@@ -37,6 +40,12 @@ export interface TestMockMCPServerOptions {
   transportFactory?: () => Transport;
   serverName?: string;
   serverVersion?: string;
+  mockLogOptions?: MockLogOptions;
+}
+
+export interface MockLogOptions {
+  enabled?: boolean;
+  directory?: string;
 }
 
 const DEFAULT_PORT = 8080;
@@ -76,6 +85,7 @@ export class TestMockMCPServer {
       serverName: options.serverName ?? "test-mock-server",
       serverVersion:
         options.serverVersion ?? (packageJson.version as string) ?? "0.0.0",
+      mockLogOptions: options.mockLogOptions,
     };
   }
 
@@ -151,14 +161,16 @@ export class TestMockMCPServer {
         timestamp,
         requestCount: requests.length,
         requests,
-      }),
+      })
     );
   }
 
   /**
    * Send AI-generated mock data back to the corresponding test process.
    */
-  provideMockData(args: ProvideBatchMockDataArgs): ToolResponseText {
+  async provideMockData(
+    args: ProvideBatchMockDataArgs,
+  ): Promise<ToolResponseText> {
     const { batchId, mocks } = args;
     const batch = this.pendingBatches.get(batchId);
 
@@ -168,19 +180,28 @@ export class TestMockMCPServer {
 
     const missing = mocks.find(
       (mock) =>
-        !batch.requests.some((request) => request.requestId === mock.requestId),
+        !batch.requests.some((request) => request.requestId === mock.requestId)
     );
 
     if (missing) {
       throw new Error(
-        `Mock data references unknown requestId: ${missing.requestId}`,
+        `Mock data references unknown requestId: ${missing.requestId}`
       );
     }
 
     if (batch.ws.readyState !== WebSocket.OPEN) {
       this.pendingBatches.delete(batchId);
       throw new Error(
-        `Test process disconnected before mocks were provided for ${batchId}`,
+        `Test process disconnected before mocks were provided for ${batchId}`
+      );
+    }
+
+    try {
+      await this.persistMockBatch(batch, mocks);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to persist mock batch ${batchId}:`,
+        error,
       );
     }
 
@@ -194,7 +215,7 @@ export class TestMockMCPServer {
     this.pendingBatches.delete(batchId);
 
     this.logger.log(
-      `✅ Delivered ${mocks.length} mock(s) to test process for ${batchId}`,
+      `✅ Delivered ${mocks.length} mock(s) to test process for ${batchId}`
     );
 
     return {
@@ -225,7 +246,7 @@ export class TestMockMCPServer {
         const address = wss.address() as AddressInfo;
         this.actualPort = address?.port ?? desiredPort;
         this.logger.log(
-          `🚀 WebSocket server listening on ws://localhost:${this.actualPort}`,
+          `🚀 WebSocket server listening on ws://localhost:${this.actualPort}`
         );
         resolve();
       });
@@ -240,8 +261,12 @@ export class TestMockMCPServer {
 
     if (this.options.batchTtlMs > 0) {
       const interval =
-        this.options.sweepIntervalMs ?? Math.min(this.options.batchTtlMs, 30_000);
-      this.cleanupTimer = setInterval(() => this.sweepExpiredBatches(), interval);
+        this.options.sweepIntervalMs ??
+        Math.min(this.options.batchTtlMs, 30_000);
+      this.cleanupTimer = setInterval(
+        () => this.sweepExpiredBatches(),
+        interval
+      );
       this.cleanupTimer.unref?.();
     }
   }
@@ -258,7 +283,7 @@ export class TestMockMCPServer {
       },
       {
         capabilities: { tools: {} },
-      },
+      }
     );
 
     this.mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -310,26 +335,23 @@ export class TestMockMCPServer {
       ],
     }));
 
-    this.mcpServer.setRequestHandler(
-      CallToolRequestSchema,
-      async (request) => {
-        const toolName = request.params.name;
-        const args = (request.params.arguments ?? {}) as ProvideBatchMockDataArgs;
+    this.mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const toolName = request.params.name;
+      const args = (request.params.arguments ?? {}) as ProvideBatchMockDataArgs;
 
-        if (toolName === "get_pending_batches") {
-          this.logger.log("📋 MCP client inspected pending batches");
-          return this.buildToolResponse(
-            JSON.stringify(this.getPendingBatches(), null, 2),
-          );
-        }
+      if (toolName === "get_pending_batches") {
+        this.logger.log("📋 MCP client inspected pending batches");
+        return this.buildToolResponse(
+          JSON.stringify(this.getPendingBatches(), null, 2)
+        );
+      }
 
-        if (toolName === "provide_batch_mock_data") {
-          return this.provideMockData(args);
-        }
+      if (toolName === "provide_batch_mock_data") {
+        return this.provideMockData(args);
+      }
 
-        throw new Error(`Unknown tool: ${toolName}`);
-      },
-    );
+      throw new Error(`Unknown tool: ${toolName}`);
+    });
 
     this.transport =
       this.options.transportFactory?.() ?? new StdioServerTransport();
@@ -397,9 +419,9 @@ export class TestMockMCPServer {
         `📥 Received ${requests.length} request(s) (${batchId})`,
         ...requests.map(
           (req, index) =>
-            `   ${index + 1}. ${req.method} ${req.endpoint} (${req.requestId})`,
+            `   ${index + 1}. ${req.method} ${req.endpoint} (${req.requestId})`
         ),
-      ].join("\n"),
+      ].join("\n")
     );
     this.logger.log("⏳ Awaiting mock data from MCP client...");
   }
@@ -409,7 +431,7 @@ export class TestMockMCPServer {
       if (batch.ws === ws) {
         this.pendingBatches.delete(batchId);
         this.logger.warn(
-          `🧹 Dropped pending batch ${batchId} because the test client disconnected`,
+          `🧹 Dropped pending batch ${batchId} because the test client disconnected`
         );
       }
     }
@@ -424,10 +446,82 @@ export class TestMockMCPServer {
         this.logger.warn(
           `🧹 Removed expired batch ${batchId} (waited more than ${
             this.options.batchTtlMs / 1000
-          }s)`,
+          }s)`
         );
       }
     }
+  }
+
+  private async persistMockBatch(
+    batch: BatchRecord,
+    mocks: MockResponseDescriptor[],
+  ): Promise<void> {
+    const mockLogOptions = this.options.mockLogOptions;
+    if (!mockLogOptions?.enabled) {
+      return;
+    }
+
+    const directory = path.resolve(
+      process.cwd(),
+      mockLogOptions.directory ?? "logs",
+    );
+    await mkdir(directory, { recursive: true });
+
+    const entry = this.buildLogEntry(batch, mocks);
+    const filePath = path.join(directory, `mock-${batch.batchId}.json`);
+    await writeFile(filePath, JSON.stringify(entry, null, 2), "utf8");
+    this.logger.log(`📝 Saved mock batch ${batch.batchId} to ${filePath}`);
+  }
+
+  private buildLogEntry(
+    batch: BatchRecord,
+    mocks: MockResponseDescriptor[],
+  ): MockLogEntry {
+    const mockMap = new Map(mocks.map((mock) => [mock.requestId, mock]));
+    return {
+      batchId: batch.batchId,
+      timestamp: batch.timestamp,
+      requestCount: batch.requestCount,
+      context: this.extractBatchContext(batch.requests),
+      requests: batch.requests.map((request) => ({
+        ...request,
+        mock: mockMap.get(request.requestId),
+      })),
+      mocks,
+    };
+  }
+
+  private extractBatchContext(
+    requests: MockRequestDescriptor[],
+  ): Record<string, unknown> | undefined {
+    const contextKeys = ["testCaseId", "testFile", "testTitle", "testName"];
+    const context: Record<string, unknown> = {};
+
+    for (const key of contextKeys) {
+      const requestWithValue = requests.find(
+        (request) => request.metadata && request.metadata[key] !== undefined,
+      );
+      if (requestWithValue?.metadata) {
+        context[key] = requestWithValue.metadata[key];
+      }
+    }
+
+    const metadataSnapshots = requests
+      .map((request) => request.metadata)
+      .filter(
+        (metadata): metadata is Record<string, unknown> => {
+          if (!metadata) {
+            return false;
+          }
+          return Object.keys(metadata).length > 0;
+        },
+      );
+
+    if (metadataSnapshots.length > 0) {
+      context.metadata = metadataSnapshots;
+    }
+
+    return Object.keys(context).length > 0 ? context : undefined;
   }
 
   private buildToolResponse(text: string): ToolResponseText {
@@ -440,4 +534,13 @@ export class TestMockMCPServer {
       ],
     };
   }
+}
+
+interface MockLogEntry {
+  batchId: string;
+  timestamp: string;
+  requestCount: number;
+  context?: Record<string, unknown>;
+  requests: Array<MockRequestDescriptor & { mock?: MockResponseDescriptor }>;
+  mocks: MockResponseDescriptor[];
 }
