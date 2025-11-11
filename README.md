@@ -67,7 +67,7 @@ import { connect } from "mock-mcp";
 
 const mockClient = await connect({
   wsUrl: "ws://127.0.0.1:3002",
-  timeoutMs: 60_000,
+  timeout: 60000,
 });
 
 await page.route("**/api/users", async (route) => {

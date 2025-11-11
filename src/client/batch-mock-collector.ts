@@ -21,7 +21,7 @@ export interface BatchMockCollectorOptions {
    *
    * @default 60000
    */
-  timeoutMs?: number;
+  timeout?: number;
   /**
    * Delay (in milliseconds) that determines how long the collector waits before
    * flushing the current batch. Setting this to 0 mirrors the "flush on the next
@@ -56,7 +56,7 @@ interface PendingRequest<T = unknown> {
   timeoutId: NodeJS.Timeout;
 }
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT = 60_000;
 const DEFAULT_BATCH_DEBOUNCE_MS = 0;
 const DEFAULT_MAX_BATCH_SIZE = 50;
 
@@ -68,7 +68,7 @@ export class BatchMockCollector {
   private readonly ws: WebSocket;
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly queuedRequestIds = new Set<string>();
-  private readonly timeoutMs: number;
+  private readonly timeout: number;
   private readonly batchDebounceMs: number;
   private readonly maxBatchSize: number;
   private readonly logger: Logger;
@@ -82,7 +82,7 @@ export class BatchMockCollector {
   private readonly readyPromise: Promise<void>;
 
   constructor(options: BatchMockCollectorOptions) {
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
     this.batchDebounceMs = options.batchDebounceMs ?? DEFAULT_BATCH_DEBOUNCE_MS;
     this.maxBatchSize = options.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.logger = options.logger ?? console;
@@ -132,10 +132,10 @@ export class BatchMockCollector {
         this.pendingRequests.delete(requestId);
         reject(
           new Error(
-            `Mock request timed out after ${this.timeoutMs}ms: ${method} ${endpoint}`,
+            `Mock request timed out after ${this.timeout}ms: ${method} ${endpoint}`,
           ),
         );
-      }, this.timeoutMs);
+      }, this.timeout);
 
       this.pendingRequests.set(requestId, {
         request,
