@@ -66,7 +66,7 @@ Restart the client—you should see the `mock-mcp` server with two tools availab
 import { connect } from "mock-mcp";
 
 const mockClient = await connect({
-  wsUrl: "ws://127.0.0.1:3002",
+  port: 3002,
   timeout: 60000,
 });
 

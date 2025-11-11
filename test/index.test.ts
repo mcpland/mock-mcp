@@ -69,7 +69,6 @@ describe("BatchMockCollector", () => {
   it("batches requests issued during the same macrotask", async () => {
     wss = new WebSocketServer({ port: 0 });
     const address = wss.address() as AddressInfo;
-    const wsUrl = `ws://127.0.0.1:${address.port}`;
     const received: BatchMockRequestMessage[] = [];
 
     wss.on("connection", (socket) => {
@@ -79,7 +78,7 @@ describe("BatchMockCollector", () => {
     });
 
     const collector = await connect({
-      wsUrl,
+      port: address.port,
       timeout: 1_000,
       batchDebounceMs: 0,
     });

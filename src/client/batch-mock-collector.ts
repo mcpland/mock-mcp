@@ -13,9 +13,11 @@ type Logger = Pick<Console, "log" | "warn" | "error"> & {
 
 export interface BatchMockCollectorOptions {
   /**
-   * WebSocket endpoint exposed by {@link TestMockMCPServer}.
+   * TCP port exposed by {@link TestMockMCPServer}.
+   *
+   * @default 8080
    */
-  wsUrl: string;
+  port?: number;
   /**
    * Timeout for individual mock requests in milliseconds.
    *
@@ -59,6 +61,7 @@ interface PendingRequest<T = unknown> {
 const DEFAULT_TIMEOUT = 60_000;
 const DEFAULT_BATCH_DEBOUNCE_MS = 0;
 const DEFAULT_MAX_BATCH_SIZE = 50;
+const DEFAULT_PORT = 8080;
 
 /**
  * Collects HTTP requests issued during a single macrotask and forwards them to
@@ -81,18 +84,20 @@ export class BatchMockCollector {
   private readyReject?: (error: Error) => void;
   private readonly readyPromise: Promise<void>;
 
-  constructor(options: BatchMockCollectorOptions) {
+  constructor(options: BatchMockCollectorOptions = {}) {
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
     this.batchDebounceMs = options.batchDebounceMs ?? DEFAULT_BATCH_DEBOUNCE_MS;
     this.maxBatchSize = options.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.logger = options.logger ?? console;
+    const port = options.port ?? DEFAULT_PORT;
 
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
 
-    this.ws = new WebSocket(options.wsUrl);
+    const wsUrl = `ws://localhost:${port}`;
+    this.ws = new WebSocket(wsUrl);
     this.setupWebSocket();
   }
 
