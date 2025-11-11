@@ -1,5 +1,9 @@
 # mock-mcp
 
+![Node CI](https://github.com/mcpland/mock-mcp/workflows/Node%20CI/badge.svg)
+[![npm](https://img.shields.io/npm/v/mock-mcp.svg)](https://www.npmjs.com/package/mock-mcp)
+![license](https://img.shields.io/npm/l/mock-mcp)
+
 An end-to-end mock data workflow for integration tests powered by the Model Context Protocol (MCP).  
 It pairs a WebSocket bridge that batches live test requests with an MCP server that exposes tooling to any compatible AI client (Cursor, Claude Desktop, custom clients, etc.).
 
