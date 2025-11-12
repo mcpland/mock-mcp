@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/mock-mcp.svg)](https://www.npmjs.com/package/mock-mcp)
 ![license](https://img.shields.io/npm/l/mock-mcp)
 
-Mock MCP orchestrates AI-generated mock data for integration tests via the Model Context Protocol (MCP). The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
+Mock MCP orchestrates AI-generated mock data via the Model Context Protocol (MCP). The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
 
 ## Table of Contents
 - [Quick Start](#quick-start)
@@ -12,6 +12,7 @@ Mock MCP orchestrates AI-generated mock data for integration tests via the Model
 - [What Mock MCP Does](#what-mock-mcp-does)
 - [Configure MCP Server](#configure-mcp-server)
 - [Connect From Tests](#connect-from-tests)
+- [Describe Requests with Metadata](#describe-requests-with-metadata)
 - [MCP tools](#mcp-tools)
 - [Available APIs](#available-apis)
 - [Environment Variables](#environment-variables)
@@ -44,16 +45,33 @@ Mock MCP orchestrates AI-generated mock data for integration tests via the Model
    import { render, screen, fireEvent } from "@testing-library/react";
    import { connect } from "mock-mcp";
    
+   const userSchema = {
+     summary: "Fetch the current user",
+     response: {
+       type: "object",
+       required: ["id", "name"],
+       properties: {
+         id: { type: "number" },
+         name: { type: "string" }
+       }
+     }
+   };
+   
    it("example", async () => {
      const mockClient = await connect();
-     // mock user with id 1
+     const metadata = {
+       schemaUrl: "https://example.com/openapi.json#/paths/~1user/get",
+       schema: userSchema,
+       instructions: "Respond with a single user described by the schema."
+     };
+   
      fetchMock.get("/user", () =>
        mockClient.requestMock("/user", "GET", { metadata })
      );
    
      const result = await fetch("/user");
      const data = await result.json();
-     expect(data).toEqual({ id: 1 });
+     expect(data).toEqual({ id: 1, name: "Jane" });
    }); // 10 minute timeout for AI interaction
    ```
 
@@ -65,14 +83,42 @@ Mock MCP orchestrates AI-generated mock data for integration tests via the Model
 
 ## Why Mock MCP
 
-Mock MCP keeps integration tests responsive by batching intercepted HTTP requests inside the same macrotask. Tests pause only until AI-crafted mocks arrive, and the WebSocket bridge, MCP server, and AI client stay decoupled so multiple suites can run concurrently without leaking state.
+### The Problem with Traditional Mock Approaches
 
-**Practical benefits**
+Testing modern web applications often feels like preparing for a battle—you need the right weapons (test cases), ammunition (mock data), and strategy (test logic). But creating mock data has always been the most tedious part:
 
-- **Faster feedback loops** resume UI assertions as soon as responses land, so suites spend less time idling.
-- **Parallel-friendly infrastructure** lets many engineers share the MCP server without request collisions.
-- **Resilient operations** enforce timeouts, TTLs, and cleanup so stale batches never poison later runs.
-- **Client choice** keeps MCP transport details abstract, enabling Cursor, Claude Desktop, or custom clients out of the box.
+```typescript
+// Traditional approach: Manual fixture hell
+const mockUsers = [
+  { id: 1, name: "Alice", email: "alice@example.com", role: "admin", ... },
+  { id: 2, name: "Bob", email: "bob@example.com", role: "user", ... },
+  // ... 50 more lines of boring manual data entry
+];
+```
+
+**Common Pain Points:**
+
+| Challenge | Traditional Solutions | Limitations |
+|-----------|----------------------|-------------|
+| **Creating Realistic Data** | Manual JSON files or faker.js | ❌ Time-consuming, lacks business logic |
+| **Complex Scenarios** | Hardcoded edge cases | ❌ Difficult to maintain, brittle |
+| **Evolving Requirements** | Update fixtures manually | ❌ High maintenance cost |
+| **Learning Curve** | New team members write fixtures | ❌ Steep learning curve for complex domains |
+| **CI/CD Integration** | Static fixtures only | ❌ Can't adapt to new scenarios |
+
+### The Mock MCP Innovation
+
+Mock MCP introduces a **paradigm shift**: instead of treating mock data as static artifacts, it makes them **AI-generated, interactive, and evolvable**.
+
+```
+Traditional:  Write Test → Create Fixtures → Run Test → Maintain Fixtures
+                                ↑                          ↓
+                                └──────── Pain Loop ───────┘
+
+Mock MCP:     Write Test → AI Generates Data → Run Test → Solidify Code
+                             ↑                           ↓
+                             └─────── Evolution ─────────┘
+```
 
 ## What Mock MCP Does
 
@@ -141,6 +187,48 @@ await page.route("**/api/users", async (route) => {
 ```
 
 Batch behaviour stays automatic: additional `requestMock` calls issued in the same macrotask are grouped, forwarded, and resolved together.
+
+## Describe Requests with Metadata
+
+`requestMock` accepts an optional third argument (`RequestMockOptions`) that is forwarded without modification to the MCP server. The most important field in that object is `metadata`, which lets the test process describe each request with the exact OpenAPI/JSON Schema fragment, sample payloads, or test context that the AI client needs to build a response.
+
+When an MCP client calls `get_pending_batches`, every `requests[].metadata` entry from the test run is included in the response. That is the channel the LLM uses to understand the requested endpoint before supplying data through `provide_batch_mock_data`. Metadata is also persisted when batch logging is enabled, so you can audit what was sent to the model.
+
+```ts
+const listProductsSchema = {
+  summary: "List products by popularity",
+  response: {
+    type: "array",
+    items: {
+      type: "object",
+      required: ["id", "name", "price"],
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        price: { type: "number" }
+      }
+    }
+  }
+};
+
+await mockClient.requestMock("/api/products", "GET", {
+  metadata: {
+    // Link or embed the authoritative contract for the AI to follow.
+    schemaUrl: "https://shop.example.com/openapi.json#/paths/~1api~1products/get",
+    schema: listProductsSchema,
+    instructions:
+      "Return 3 popular products with stable ids so the UI can snapshot them.",
+    testFile: expect.getState().testPath
+  }
+});
+```
+
+**Tips for useful metadata**
+
+- Embed the OpenAPI/JSON Schema snippet (or a reference URL) that describes the response structure for the intercepted endpoint.
+- Include contextual hints such as the test name, scenario, user role, or seed data so the model can mirror your expected fixtures.
+- Keep the metadata JSON-serializable and deterministic; large binary blobs or class instances will be dropped.
+- Reuse helper functions to centralize schema definitions so each test only supplies the endpoint-specific instructions.
 
 ## MCP tools
 
