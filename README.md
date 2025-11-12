@@ -186,11 +186,11 @@ Both classes accept logger overrides, timeout tweaks, and other ergonomics surfa
          │     [req-1, req-2, req-3]  │                            │
          ├═══════════════════════════►│                            │
          │                            │                            │
-         │    ⏳ Test paused...        │  4. Store batch in queue  │
-         │       Awaiting mocks       │     pendingBatches.set()  │
+         │     Test paused...         │  4. Store batch in queue   │
+         │       Awaiting mocks       │     pendingBatches.set()   │
          │                            │                            │
-         │                            │  5. Wait for MCP Client   │
-         │                            │     to call tools         │
+         │                            │  5. Wait for MCP Client    │
+         │                            │     to call tools          │
          │                            │                            │
          │                            │◄───────────────────────────┤
          │                            │  6. Tool Call:             │
@@ -221,7 +221,7 @@ Both classes accept logger overrides, timeout tweaks, and other ergonomics surfa
          │      Assertions &          │                            │
          │      Verification          │                            │
          │                            │                            │
-         │  13. Test Complete ✅      │                            │
+         │  13. Test Complete ✓       │                            │
          ▼                            ▼                            ▼
 
 Protocol Summary:
