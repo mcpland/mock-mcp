@@ -147,68 +147,12 @@ Example payload for `provide_batch_mock_data`:
 
 Both classes accept logger overrides, timeout tweaks, and other ergonomics surfaced in the technical design.
 
-## Architecture Overview
+## How It Works
 
 1. Tests call `BatchMockCollector.requestMock()` whenever they intercept an HTTP request (e.g., via Playwright/Puppeteer routing).
 2. Requests issued during the same macrotask are sent to the `TestMockMCPServer` through a WebSocket batch message.
 3. The server exposes pending batches to the MCP client through tooling; the AI generates context-aware responses.
 4. AI-provided mock data is routed back through the WebSocket bridge, resolving the pending promises inside the test.
-
-### System Architecture Diagram
-
-```
-┌────────────────────────────────────────────────────────────┐
-│                      Test Process                          │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Test Cases                                          │  │
-│  │  - page.goto('/dashboard')                           │  │
-│  │  - fetch /api/users                                  │  │
-│  │  - fetch /api/products                               │  │
-│  │  - fetch /api/orders                                 │  │
-│  └───────────────┬──────────────────────────────────────┘  │
-│                  │ BatchMockCollector                     │
-│                  │ - collect via setTimeout(0)            │
-│                  │ - pause Promises until mocks arrive    │
-│  ┌───────────────▼──────────────────────────────────────┐  │
-│  │  WebSocket Client                                   │  │
-│  │  ws://localhost:3002                                │  │
-│  └───────────────┬──────────────────────────────────────┘  │
-└──────────────────┴─────────────────────────────────────────┘
-                   │
-                   │ BATCH_MOCK_REQUEST
-                   │ {requests: [{requestId, endpoint, method}]}
-                   │
-┌──────────────────▼─────────────────────────────────────────┐
-│               MCP Server (Coordinator)                     │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  WebSocket Server (Port 3002)                        │  │
-│  │  - receive batched requests                          │  │
-│  │  - manage pending queue                              │  │
-│  │  - forward mock data                                 │  │
-│  └───────────────┬──────────────────────────────────────┘  │
-│                  │                                         │
-│  ┌───────────────▼──────────────────────────────────────┐  │
-│  │  MCP Server Implementation                           │  │
-│  │  - stdio transport                                   │  │
-│  │  - tools:                                            │  │
-│  │    • get_pending_batches                             │  │
-│  │    • provide_batch_mock_data                         │  │
-│  └───────────────┬──────────────────────────────────────┘  │
-└──────────────────┴─────────────────────────────────────────┘
-                   │
-                   │ MCP protocol (stdio)
-                   │
-┌──────────────────▼─────────────────────────────────────────┐
-│            MCP Client (AI Agent / Human)                   │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Cursor / Claude Desktop / VS Code Extension         │  │
-│  │  1. Call get_pending_batches                         │  │
-│  │  2. Inspect pending requests                         │  │
-│  │  3. LLM generates mock data                          │  │
-│  │  4. Call provide_batch_mock_data                     │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
-```
 
 ### Three-Process Collaboration Model
 
@@ -221,28 +165,79 @@ Both classes accept logger overrides, timeout tweaks, and other ergonomics surfa
 ### Data Flow Sequence
 
 ```
-┌──────────────────────────┬────────────────────────────┬──────────────────────────────┐
-│ Test Process             │ MCP Server                │ MCP Client (AI)              │
-├──────────────────────────┼────────────────────────────┼──────────────────────────────┤
-│ Start tests              │                            │                              │
-│ page.goto() ───────────> │                            │                              │
-│ fetch /api/users ───────>│                            │                              │
-│ fetch /api/products ────>│                            │                              │
-│ fetch /api/orders ──────>│                            │                              │
-│ Promises pending         │                            │                              │
-│                          │                            │                              │
-│ BATCH_MOCK_REQUEST =====>│                            │                              │
-│ [req-1, req-2, req-3]    │                            │                              │
-│ Pause and wait           │ pendingBatches.set()       │                              │
-│                          │◀──── get_pending_batches   │ Call tool                    │
-│                          │───── return batch info ───>│ Review pending requests      │
-│                          │                            │ AI analyzes & drafts mocks   │
-│                          │◀──── provide_batch_mock_data │ Submit generated payload     │
-│ BATCH_MOCK_RESPONSE <====│                            │                              │
-│ Resolve req-1/2/3        │                            │                              │
-│ Assertions & checks ────>│                            │                              │
-│ Tests complete ✅         │                            │                              │
-└──────────────────────────┴────────────────────────────┴──────────────────────────────┘
+┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
+│  Test Process    │         │   MCP Server     │         │  MCP Client      │
+│  (Browser Test)  │         │                  │         │     (AI)         │
+└────────┬─────────┘         └────────┬─────────┘         └────────┬─────────┘
+         │                            │                            │
+         │  1. Start Test             │                            │
+         │     page.goto()            │                            │
+         ├───────────────────────────►│                            │
+         │                            │                            │
+         │  2. Trigger concurrent     │                            │
+         │     requests               │                            │
+         │     fetch /api/users       │                            │
+         │     fetch /api/products    │                            │
+         │     fetch /api/orders      │                            │
+         │     (Promises pending)     │                            │
+         │                            │                            │
+         │  3. setTimeout(0) batches  │                            │
+         │     BATCH_MOCK_REQUEST     │                            │
+         │     [req-1, req-2, req-3]  │                            │
+         ├═══════════════════════════►│                            │
+         │                            │                            │
+         │    ⏳ Test paused...        │  4. Store batch in queue  │
+         │       Awaiting mocks       │     pendingBatches.set()  │
+         │                            │                            │
+         │                            │  5. Wait for MCP Client   │
+         │                            │     to call tools         │
+         │                            │                            │
+         │                            │◄───────────────────────────┤
+         │                            │  6. Tool Call:             │
+         │                            │     get_pending_batches    │
+         │                            │                            │
+         │                            │  7. Return batch info      │
+         │                            ├───────────────────────────►│
+         │                            │  [{batchId, requests}]     │
+         │                            │                            │
+         │                            │        8. AI analyzes      │
+         │                            │           Generates mocks  │
+         │                            │                            │
+         │                            │◄───────────────────────────┤
+         │                            │  9. Tool Call:             │
+         │                            │     provide_batch_mock_data│
+         │                            │     {mocks: [...]}         │
+         │                            │                            │
+         │  10. BATCH_MOCK_RESPONSE   │                            │
+         │      [mock-1, mock-2, ...] │                            │
+         │◄═══════════════════════════┤                            │
+         │                            │                            │
+         │  11. Batch resolve         │                            │
+         │      req-1.resolve()       │                            │
+         │      req-2.resolve()       │                            │
+         │      req-3.resolve()       │                            │
+         │                            │                            │
+         │  12. Test continues        │                            │
+         │      Assertions &          │                            │
+         │      Verification          │                            │
+         │                            │                            │
+         │  13. Test Complete ✅      │                            │
+         ▼                            ▼                            ▼
+
+Protocol Summary:
+─────────────────
+- Test Process ←→ MCP Server: WebSocket/IPC
+  Message types: BATCH_MOCK_REQUEST, BATCH_MOCK_RESPONSE
+
+- MCP Server ←→ MCP Client: Stdio/JSON-RPC (MCP Protocol)
+  Tools: get_pending_batches, provide_batch_mock_data
+
+Key Features:
+──────────────
+✓ Batch processing of concurrent requests
+✓ Non-blocking test execution during AI mock generation
+✓ Real-time mock data generation by AI
+✓ Automatic promise resolution after mock provision
 ```
 
 
