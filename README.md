@@ -4,75 +4,97 @@
 [![npm](https://img.shields.io/npm/v/mock-mcp.svg)](https://www.npmjs.com/package/mock-mcp)
 ![license](https://img.shields.io/npm/l/mock-mcp)
 
-An end-to-end mock data workflow for integration tests powered by the Model Context Protocol (MCP).  
-It pairs a WebSocket bridge that batches live test requests with an MCP server that exposes tooling to any compatible AI client (Cursor, Claude Desktop, custom clients, etc.).
+Mock MCP orchestrates AI-generated mock data for integration tests via the Model Context Protocol (MCP). The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
 
-## Features
-
-- **Batch-aware test client** – collects every network interception inside the same macrotask and pauses the test until mock data arrives.
-- **MCP tooling** – `get_pending_batches` and `provide_batch_mock_data` describe the current test state and accept AI-generated payloads.
-- **WebSocket bridge** – keeps the test runner, the MCP server, and the AI client decoupled while supporting multiple concurrent runs.
-- **Timeouts, TTLs, and cleanup** – protects the test runner from stale batches or disconnected clients.
+## Table of Contents
+- [Quick Start](#quick-start)
+- [Why Mock MCP](#why-mock-mcp)
+- [What Mock MCP Does](#what-mock-mcp-does)
+- [Configure MCP Server](#configure-mcp-server)
+- [Connect From Tests](#connect-from-tests)
+- [MCP tools](#mcp-tools)
+- [Available APIs](#available-apis)
+- [Environment Variables](#environment-variables)
+- [How It Works](#how-it-works)
+- [Use the development scripts](#use-the-development-scripts)
+- [License](#license)
 
 ## Quick Start
 
-**Step 1: Install**
+1. **Install the package.** Add mock-mcp as a dev dependency inside your project.
 
-```bash
-npm install -D mock-mcp
-```
+   ```bash
+   npm install -D mock-mcp
+   ```
 
-**Step 2: Configure Model Context Protocol (MCP) server** (e.g., in Claude Desktop config):
+2. **Configure the Model Context Protocol server.** For example, Claude Desktop can launch the binary through npx:
 
-```json
-{
-  "mock-mcp": {
-    "command": "npx",
-    "args": ["-y", "mock-mcp@latest"]
-  }
-}
-```
+   ```json
+   {
+     "mock-mcp": {
+       "command": "npx",
+       "args": ["-y", "mock-mcp@latest"]
+     }
+   }
+   ```
 
-**Step 3: Connect from your test:**
+3. **Connect from your tests.** Use `connect` to retrieve a mock client and request data for intercepted calls.
 
-```ts
-import { render, screen, fireEvent } from "@testing-library/react";
-import { connect } from "mock-mcp";
+   ```ts
+   import { render, screen, fireEvent } from "@testing-library/react";
+   import { connect } from "mock-mcp";
+   
+   it("example", async () => {
+     const mockClient = await connect();
+     // mock user with id 1
+     fetchMock.get("/user", () =>
+       mockClient.requestMock("/user", "GET", { metadata })
+     );
+   
+     const result = await fetch("/user");
+     const data = await result.json();
+     expect(data).toEqual({ id: 1 });
+   }); // 10 minute timeout for AI interaction
+   ```
 
-it("example", async () => {
-  const mockClient = await connect();
-  // mock user with id 1
-  fetchMock.get("/user", () =>
-    mockClient.requestMock("/user", "GET", { metadata })
-  );
+4. **Run with MCP enabled.** Prompt your AI client to run the persistent test command and provide mocks through the tools.
 
-  const result = await fetch("/user");
-  const data = await result.json();
-  expect(data).toEqual({ id: 1 });
-}); // 10 minute timeout for AI interaction
-```
+   ```
+   Please run the persistent test: `MOCK_MCP=true npm test test/example.test.tsx` and mock fetch data with mock-mcp
+   ```
 
-**Step 4: Run with MCP enabled:**
+## Why Mock MCP
 
-Prompt:
+Mock MCP keeps integration tests responsive by batching intercepted HTTP requests inside the same macrotask. Tests pause only until AI-crafted mocks arrive, and the WebSocket bridge, MCP server, and AI client stay decoupled so multiple suites can run concurrently without leaking state.
 
-```
-Please run the persistent test: `MOCK_MCP=true npm test test/example.test.tsx` and mock fetch data with mock-mcp
-```
+**Practical benefits**
 
-### CLI flags and env
+- **Faster feedback loops** resume UI assertions as soon as responses land, so suites spend less time idling.
+- **Parallel-friendly infrastructure** lets many engineers share the MCP server without request collisions.
+- **Resilient operations** enforce timeouts, TTLs, and cleanup so stale batches never poison later runs.
+- **Client choice** keeps MCP transport details abstract, enabling Cursor, Claude Desktop, or custom clients out of the box.
+
+## What Mock MCP Does
+
+Mock MCP pairs a WebSocket batch bridge with MCP tooling to move intercepted requests from tests to AI helpers and back again.
+
+- **Batch-aware test client** collects every network interception inside a single macrotask and waits for the full response set.
+- **MCP tooling** exposes `get_pending_batches` and `provide_batch_mock_data` so AI agents understand the waiting requests and push data back.
+- **WebSocket bridge** connects the test runner to the MCP server while hiding transport details from both sides.
+- **Timeouts, TTLs, and cleanup** guard the test runner from stale batches or disconnected clients.
+
+## Configure MCP Server
+
+CLI flags keep the WebSocket bridge and the MCP transports aligned. Use them to adapt the server to your local ports while the Environment Variables section covers per-process overrides:
 
 | Option            | Description                                                        | Default |
 | ----------------- | ------------------------------------------------------------------ | ------- |
 | `--port`, `-p`    | WebSocket port for test runners                                    | `3002`  |
 | `--no-stdio`      | Disable the MCP stdio transport (useful for local debugging/tests) | enabled |
-| `MCP_SERVER_PORT` | Same as `--port`                                                   | `3002`  |
 
-The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down gracefully.
+The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down cleanly.
 
-### Connecting an MCP client (Cursor example)
-
-Add the server to your MCP client configuration:
+**Add the server to MCP clients.** MCP clients such as Cursor or Claude Desktop need an entry in their configuration so they can launch the bridge:
 
 ```json
 {
@@ -81,16 +103,18 @@ Add the server to your MCP client configuration:
       "command": "npx",
       "args": ["-y", "mock-mcp@latest"],
       "env": {
-        "MCP_SERVER_PORT": "3002"
+        "MCP_SERVER_PORT": "3002" // 3002 is the default port
       }
     }
   }
 }
 ```
 
-Restart the client—you should see the `mock-mcp` server with two tools available.
+Restart the client and confirm that the `mock-mcp` server exposes two tools.
 
-## Using the Batch Client in Tests
+## Connect From Tests
+
+Tests call `connect` to spin up a `BatchMockCollector`, intercept HTTP calls, and wait for fulfilled data:
 
 ```ts
 // tests/mocks.ts
@@ -116,9 +140,11 @@ await page.route("**/api/users", async (route) => {
 });
 ```
 
-Batch behaviour is automatic—any additional `requestMock` calls issued in the same macrotask are grouped before being forwarded to the server.
+Batch behaviour stays automatic: additional `requestMock` calls issued in the same macrotask are grouped, forwarded, and resolved together.
 
-## MCP Tools
+## MCP tools
+
+Two tools keep the queue visible to AI agents and deliver mocks back to waiting tests:
 
 | Tool                      | Purpose                                    | Response                                                |
 | ------------------------- | ------------------------------------------ | ------------------------------------------------------- |
@@ -139,30 +165,34 @@ Example payload for `provide_batch_mock_data`:
 }
 ```
 
-## Library API
+## Available APIs
 
-- `TestMockMCPServer` – start/stop the WebSocket + MCP tooling bridge programmatically.
-- `BatchMockCollector` – low-level batching client used by the test runner.
-- `connect(options)` – convenience helper that instantiates `BatchMockCollector` and waits for the WebSocket connection to open.
+The library exports primitives so you can embed the workflow inside bespoke runners or scripts:
 
-Both classes accept logger overrides, timeout tweaks, and other ergonomics surfaced in the technical design.
+- `TestMockMCPServer` starts and stops the WebSocket plus MCP tooling bridge programmatically.
+- `BatchMockCollector` provides a low-level batching client used directly inside test environments.
+- `connect(options)` instantiates `BatchMockCollector` and waits for the WebSocket connection to open.
+
+Each class accepts logger overrides, timeout tweaks, and other ergonomics surfaced in the technical design.
+
+## Environment Variables
+
+| Variable          | Description                                                                 | Default |
+| ----------------- | --------------------------------------------------------------------------- | ------- |
+| `MCP_SERVER_PORT` | Overrides the WebSocket port used by both the CLI and any spawned MCP host. | `3002`  |
+| `MOCK_MCP`        | Enables the test runner hook so intercepted requests are routed to mock-mcp. | unset   |
 
 ## How It Works
 
-1. Tests call `BatchMockCollector.requestMock()` whenever they intercept an HTTP request (e.g., via Playwright/Puppeteer routing).
-2. Requests issued during the same macrotask are sent to the `TestMockMCPServer` through a WebSocket batch message.
-3. The server exposes pending batches to the MCP client through tooling; the AI generates context-aware responses.
-4. AI-provided mock data is routed back through the WebSocket bridge, resolving the pending promises inside the test.
+Three collaborating processes share responsibilities while staying loosely coupled:
 
-### Three-Process Collaboration Model
+| Process          | Responsibility                                          | Technology                                   | Communication                              |
+| ---------------- | ------------------------------------------------------- | -------------------------------------------- | ------------------------------------------ |
+| **Test Process** | Executes test cases and intercepts HTTP requests        | Playwright/Puppeteer + WebSocket client      | WebSocket → MCP Server                     |
+| **MCP Server**   | Coordinates batches and forwards data between parties   | Node.js + WebSocket server + MCP SDK         | stdio ↔ MCP Client · WebSocket ↔ Test Flow |
+| **MCP Client**   | Uses AI to produce mock data via MCP tools              | Cursor / Claude Desktop / custom clients     | MCP protocol → MCP Server                  |
 
-| Process        | Responsibility                                          | Technology                                   | Communication              |
-| -------------- | ------------------------------------------------------- | -------------------------------------------- | -------------------------- |
-| **Test Process** | Executes test cases and intercepts HTTP requests        | Playwright/Puppeteer + WebSocket client      | WebSocket → MCP Server     |
-| **MCP Server**   | Coordinates batches and forwards data between parties   | Node.js + WebSocket server + MCP SDK         | stdio ↔ MCP Client<br>WebSocket ↔ Test Process |
-| **MCP Client**   | Uses AI to produce mock data via MCP tools              | Cursor / Claude Desktop / custom clients     | MCP protocol → MCP Server  |
-
-### Data Flow Sequence
+### Data flow sequence clarifies message order
 
 ```
 ┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
@@ -240,8 +270,7 @@ Key Features:
 ✓ Automatic promise resolution after mock provision
 ```
 
-
-## Development & Testing
+## Use the development scripts
 
 ```bash
 pnpm test        # runs Vitest suites
