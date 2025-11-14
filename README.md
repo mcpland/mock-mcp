@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/mock-mcp.svg)](https://www.npmjs.com/package/mock-mcp)
 ![license](https://img.shields.io/npm/l/mock-mcp)
 
-Mock MCP orchestrates AI-generated mock data via the Model Context Protocol (MCP). The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
+Mock MCP Server - AI-generated mock data. The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
 
 ## Table of Contents
 
