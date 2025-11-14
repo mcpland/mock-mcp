@@ -7,6 +7,7 @@
 Mock MCP orchestrates AI-generated mock data via the Model Context Protocol (MCP). The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
 
 ## Table of Contents
+
 - [Quick Start](#quick-start)
 - [Why Mock MCP](#why-mock-mcp)
 - [What Mock MCP Does](#what-mock-mcp-does)
@@ -44,7 +45,7 @@ Mock MCP orchestrates AI-generated mock data via the Model Context Protocol (MCP
    ```ts
    import { render, screen, fireEvent } from "@testing-library/react";
    import { connect } from "mock-mcp";
-   
+
    const userSchema = {
      summary: "Fetch the current user",
      response: {
@@ -52,23 +53,23 @@ Mock MCP orchestrates AI-generated mock data via the Model Context Protocol (MCP
        required: ["id", "name"],
        properties: {
          id: { type: "number" },
-         name: { type: "string" }
-       }
-     }
+         name: { type: "string" },
+       },
+     },
    };
-   
+
    it("example", async () => {
      const mockClient = await connect();
      const metadata = {
        schemaUrl: "https://example.com/openapi.json#/paths/~1user/get",
        schema: userSchema,
-       instructions: "Respond with a single user described by the schema."
+       instructions: "Respond with a single user described by the schema.",
      };
-   
+
      fetchMock.get("/user", () =>
        mockClient.requestMock("/user", "GET", { metadata })
      );
-   
+
      const result = await fetch("/user");
      const data = await result.json();
      expect(data).toEqual({ id: 1, name: "Jane" });
@@ -98,13 +99,13 @@ const mockUsers = [
 
 **Common Pain Points:**
 
-| Challenge | Traditional Solutions | Limitations |
-|-----------|----------------------|-------------|
-| **Creating Realistic Data** | Manual JSON files or faker.js | ❌ Time-consuming, lacks business logic |
-| **Complex Scenarios** | Hardcoded edge cases | ❌ Difficult to maintain, brittle |
-| **Evolving Requirements** | Update fixtures manually | ❌ High maintenance cost |
-| **Learning Curve** | New team members write fixtures | ❌ Steep learning curve for complex domains |
-| **CI/CD Integration** | Static fixtures only | ❌ Can't adapt to new scenarios |
+| Challenge                   | Traditional Solutions           | Limitations                                 |
+| --------------------------- | ------------------------------- | ------------------------------------------- |
+| **Creating Realistic Data** | Manual JSON files or faker.js   | ❌ Time-consuming, lacks business logic     |
+| **Complex Scenarios**       | Hardcoded edge cases            | ❌ Difficult to maintain, brittle           |
+| **Evolving Requirements**   | Update fixtures manually        | ❌ High maintenance cost                    |
+| **Learning Curve**          | New team members write fixtures | ❌ Steep learning curve for complex domains |
+| **CI/CD Integration**       | Static fixtures only            | ❌ Can't adapt to new scenarios             |
 
 ### The Mock MCP Innovation
 
@@ -133,10 +134,10 @@ Mock MCP pairs a WebSocket batch bridge with MCP tooling to move intercepted req
 
 CLI flags keep the WebSocket bridge and the MCP transports aligned. Use them to adapt the server to your local ports while the Environment Variables section covers per-process overrides:
 
-| Option            | Description                                                        | Default |
-| ----------------- | ------------------------------------------------------------------ | ------- |
-| `--port`, `-p`    | WebSocket port for test runners                                    | `3002`  |
-| `--no-stdio`      | Disable the MCP stdio transport (useful for local debugging/tests) | enabled |
+| Option         | Description                                                        | Default |
+| -------------- | ------------------------------------------------------------------ | ------- |
+| `--port`, `-p` | WebSocket port for test runners                                    | `3002`  |
+| `--no-stdio`   | Disable the MCP stdio transport (useful for local debugging/tests) | enabled |
 
 The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down cleanly.
 
@@ -205,21 +206,22 @@ const listProductsSchema = {
       properties: {
         id: { type: "string" },
         name: { type: "string" },
-        price: { type: "number" }
-      }
-    }
-  }
+        price: { type: "number" },
+      },
+    },
+  },
 };
 
 await mockClient.requestMock("/api/products", "GET", {
   metadata: {
     // Link or embed the authoritative contract for the AI to follow.
-    schemaUrl: "https://shop.example.com/openapi.json#/paths/~1api~1products/get",
+    schemaUrl:
+      "https://shop.example.com/openapi.json#/paths/~1api~1products/get",
     schema: listProductsSchema,
     instructions:
       "Return 3 popular products with stable ids so the UI can snapshot them.",
-    testFile: expect.getState().testPath
-  }
+    testFile: expect.getState().testPath,
+  },
 });
 ```
 
@@ -265,20 +267,20 @@ Each class accepts logger overrides, timeout tweaks, and other ergonomics surfac
 
 ## Environment Variables
 
-| Variable          | Description                                                                 | Default |
-| ----------------- | --------------------------------------------------------------------------- | ------- |
-| `MCP_SERVER_PORT` | Overrides the WebSocket port used by both the CLI and any spawned MCP host. | `3002`  |
+| Variable          | Description                                                                  | Default |
+| ----------------- | ---------------------------------------------------------------------------- | ------- |
+| `MCP_SERVER_PORT` | Overrides the WebSocket port used by both the CLI and any spawned MCP host.  | `3002`  |
 | `MOCK_MCP`        | Enables the test runner hook so intercepted requests are routed to mock-mcp. | unset   |
 
 ## How It Works
 
 Three collaborating processes share responsibilities while staying loosely coupled:
 
-| Process          | Responsibility                                          | Technology                                   | Communication                              |
-| ---------------- | ------------------------------------------------------- | -------------------------------------------- | ------------------------------------------ |
-| **Test Process** | Executes test cases and intercepts HTTP requests        | Playwright/Puppeteer + WebSocket client      | WebSocket → MCP Server                     |
-| **MCP Server**   | Coordinates batches and forwards data between parties   | Node.js + WebSocket server + MCP SDK         | stdio ↔ MCP Client · WebSocket ↔ Test Flow |
-| **MCP Client**   | Uses AI to produce mock data via MCP tools              | Cursor / Claude Desktop / custom clients     | MCP protocol → MCP Server                  |
+| Process          | Responsibility                                        | Technology                               | Communication                              |
+| ---------------- | ----------------------------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| **Test Process** | Executes test cases and intercepts HTTP requests      | Playwright/Puppeteer + WebSocket client  | WebSocket → MCP Server                     |
+| **MCP Server**   | Coordinates batches and forwards data between parties | Node.js + WebSocket server + MCP SDK     | stdio ↔ MCP Client · WebSocket ↔ Test Flow |
+| **MCP Client**   | Uses AI to produce mock data via MCP tools            | Cursor / Claude Desktop / custom clients | MCP protocol → MCP Server                  |
 
 ### Data flow sequence clarifies message order
 
