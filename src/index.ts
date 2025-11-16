@@ -14,6 +14,8 @@ import { connect, type ConnectOptions } from "./client/connect.js";
 
 const DEFAULT_PORT = 3002;
 
+console.error('mock-mcp running');
+
 async function runCli() {
   const cliArgs = process.argv.slice(2);
   let port = Number.parseInt(process.env.MCP_SERVER_PORT ?? "", 10);
