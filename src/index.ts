@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
 import process from "node:process";
 import {
   TestMockMCPServer,
@@ -13,8 +14,6 @@ import {
 import { connect, type ConnectOptions } from "./client/connect.js";
 
 const DEFAULT_PORT = 3002;
-
-console.error('mock-mcp running');
 
 async function runCli() {
   const cliArgs = process.argv.slice(2);
@@ -61,7 +60,11 @@ const isCliExecution = (() => {
     return false;
   }
 
-  return import.meta.url === pathToFileURL(process.argv[1]!).href;
+  // Resolve symlinks to ensure proper comparison between import.meta.url and argv[1]
+  // This is necessary because import.meta.url contains the real path,
+  // while process.argv[1] may contain symlinks (e.g., /tmp vs /private/tmp on macOS)
+  const scriptPath = realpathSync(process.argv[1]!);
+  return import.meta.url === pathToFileURL(scriptPath).href;
 })();
 
 if (isCliExecution) {
