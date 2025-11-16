@@ -212,7 +212,7 @@ export class TestMockMCPServer {
     batch.ws.send(JSON.stringify(payload));
     this.pendingBatches.delete(batchId);
 
-    this.logger.log(
+    this.logger.error(
       `✅ Delivered ${mocks.length} mock(s) to test process for ${batchId}`
     );
 
@@ -238,7 +238,7 @@ export class TestMockMCPServer {
       wss.once("listening", () => {
         const address = wss.address() as AddressInfo;
         this.actualPort = address?.port ?? desiredPort;
-        this.logger.log(
+        this.logger.error(
           `🚀 WebSocket server listening on ws://localhost:${this.actualPort}`
         );
         resolve();
@@ -340,7 +340,7 @@ export class TestMockMCPServer {
         const toolName = request.params.name;
 
         if (toolName === "get_pending_batches") {
-          this.logger.log("📋 MCP client inspected pending batches");
+          this.logger.error("📋 MCP client inspected pending batches");
           return this.buildToolResponse(
             JSON.stringify(this.getPendingBatches(), null, 2)
           );
@@ -361,16 +361,16 @@ export class TestMockMCPServer {
     this.transport =
       this.options.transportFactory?.() ?? new StdioServerTransport();
     await this.mcpServer.connect(this.transport);
-    this.logger.log("✅ MCP server is ready (stdio transport)");
+    this.logger.error("✅ MCP server is ready (stdio transport)");
   }
 
   private handleConnection(ws: WebSocket) {
-    this.logger.log("🔌 Test process connected");
+    this.logger.error("🔌 Test process connected");
     this.clients.add(ws);
 
     ws.on("message", (data) => this.handleClientMessage(ws, data));
     ws.on("close", () => {
-      this.logger.log("🔌 Test process disconnected");
+      this.logger.error("🔌 Test process disconnected");
       this.clients.delete(ws);
       this.dropBatchesForClient(ws);
     });
@@ -419,7 +419,7 @@ export class TestMockMCPServer {
       expiresAt,
     });
 
-    this.logger.log(
+    this.logger.error(
       [
         `📥 Received ${requests.length} request(s) (${batchId})`,
         ...requests.map(
@@ -428,7 +428,7 @@ export class TestMockMCPServer {
         ),
       ].join("\n")
     );
-    this.logger.log("⏳ Awaiting mock data from MCP client...");
+    this.logger.error("⏳ Awaiting mock data from MCP client...");
   }
 
   private dropBatchesForClient(ws: WebSocket) {
@@ -475,7 +475,7 @@ export class TestMockMCPServer {
     const entry = this.buildLogEntry(batch, mocks);
     const filePath = path.join(directory, `mock-${batch.batchId}.json`);
     await writeFile(filePath, JSON.stringify(entry, null, 2), "utf8");
-    this.logger.log(`📝 Saved mock batch ${batch.batchId} to ${filePath}`);
+    this.logger.error(`📝 Saved mock batch ${batch.batchId} to ${filePath}`);
   }
 
   private buildLogEntry(

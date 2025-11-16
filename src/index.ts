@@ -40,12 +40,12 @@ async function runCli() {
 
   await server.start();
 
-  console.log(
+  console.error(
     `🎯 Test Mock MCP server ready on ws://localhost:${server.port ?? port}`,
   );
 
   const shutdown = async () => {
-    console.log("👋 Shutting down Test Mock MCP server...");
+    console.error("👋 Shutting down Test Mock MCP server...");
     await server.stop();
     process.exit(0);
   };
