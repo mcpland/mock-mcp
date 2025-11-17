@@ -15,7 +15,7 @@ export interface BatchMockCollectorOptions {
   /**
    * TCP port exposed by {@link TestMockMCPServer}.
    *
-   * @default 8080
+   * @default 3002
    */
   port?: number;
   /**
@@ -61,7 +61,7 @@ interface PendingRequest {
 const DEFAULT_TIMEOUT = 60_000;
 const DEFAULT_BATCH_DEBOUNCE_MS = 0;
 const DEFAULT_MAX_BATCH_SIZE = 50;
-const DEFAULT_PORT = 8080;
+const DEFAULT_PORT = 3002;
 
 /**
  * Collects HTTP requests issued during a single macrotask and forwards them to
