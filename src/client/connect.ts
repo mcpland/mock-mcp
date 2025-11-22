@@ -1,5 +1,6 @@
 import { BatchMockCollector } from "./batch-mock-collector.js";
 import type { BatchMockCollectorOptions } from "./batch-mock-collector.js";
+import { isEnabled } from "./util.js";
 
 export type ConnectOptions = number | BatchMockCollectorOptions | undefined;
 
@@ -10,10 +11,7 @@ export type ConnectOptions = number | BatchMockCollectorOptions | undefined;
 export const connect = async (
   options?: ConnectOptions
 ): Promise<BatchMockCollector | void> => {
-  const isEnabled =
-    process.env.MOCK_MCP !== undefined && process.env.MOCK_MCP !== "0";
-
-  if (!isEnabled) {
+  if (!isEnabled()) {
     console.log("[mock-mcp] Skipping (set MOCK_MCP=1 to enable)");
     return;
   }

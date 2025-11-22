@@ -6,6 +6,7 @@ import {
   type BatchMockResponseMessage,
   type MockRequestDescriptor,
 } from "../types.js";
+import { isEnabled } from "./util.js";
 
 type Logger = Pick<Console, "log" | "warn" | "error"> & {
   debug?: (...args: unknown[]) => void;
@@ -171,6 +172,9 @@ export class BatchMockCollector {
    * created after this method is called are not included.
    */
   async waitForPendingRequests(): Promise<void> {
+    if (!isEnabled()) {
+      return;
+    }
     const pendingCompletions = Array.from(this.pendingRequests.values()).map(
       (pending) => pending.completion
     );
