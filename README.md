@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/mock-mcp.svg)](https://www.npmjs.com/package/mock-mcp)
 ![license](https://img.shields.io/npm/l/mock-mcp)
 
-Mock MCP Server - AI-generated mock data. The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time.
+Mock MCP Server - AI-generated mock data based on your **OpenAPI JSON Schema** definitions. The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time, ensuring strict contract compliance.
 
 ## Table of Contents
 
@@ -116,15 +116,20 @@ Traditional:  Write Test → Create Fixtures → Run Test → Maintain Fixtures
                                 ↑                          ↓
                                 └──────── Pain Loop ───────┘
 
-Mock MCP:     Write Test → AI Generates Data → Run Test → Solidify Code
-                             ↑                           ↓
-                             └─────── Evolution ─────────┘
+Mock MCP:     Write Test → AI Generates Data (Schema-Compliant) → Run Test → Solidify Code
+                             ↑                                    ↓
+                             └───────────── Evolution ────────────┘
 ```
+
+### Schema-Driven Accuracy
+
+Unlike "hallucinated" mocks, Mock MCP uses your actual **OpenAPI JSON Schema** definitions to ground the AI. This ensures that generated data not only looks real but strictly adheres to your API contracts, catching integration issues early.
 
 ## What Mock MCP Does
 
 Mock MCP pairs a WebSocket batch bridge with MCP tooling to move intercepted requests from tests to AI helpers and back again.
 
+- **Schema-aware generation** uses your provided metadata (OpenAPI JSON Schema) to ensure mocks match production behavior.
 - **Batch-aware test client** collects every network interception inside a single macrotask and waits for the full response set.
 - **MCP tooling** exposes `get_pending_batches` and `provide_batch_mock_data` so AI agents understand the waiting requests and push data back.
 - **WebSocket bridge** connects the test runner to the MCP server while hiding transport details from both sides.
@@ -199,7 +204,7 @@ await mockClient.waitForPendingRequests();
 
 ## Describe Requests with Metadata
 
-`requestMock` accepts an optional third argument (`RequestMockOptions`) that is forwarded without modification to the MCP server. The most important field in that object is `metadata`, which lets the test process describe each request with the exact OpenAPI/JSON Schema fragment, sample payloads, or test context that the AI client needs to build a response.
+`requestMock` accepts an optional third argument (`RequestMockOptions`) that is forwarded without modification to the MCP server. The most important field in that object is `metadata`, which lets the test process describe each request with the exact OpenAPI JSON Schema fragment, sample payloads, or test context that the AI client needs to build a response.
 
 When an MCP client calls `get_pending_batches`, every `requests[].metadata` entry from the test run is included in the response. That is the channel the LLM uses to understand the requested endpoint before supplying data through `provide_batch_mock_data`. Metadata is also persisted when batch logging is enabled, so you can audit what was sent to the model.
 
