@@ -25,62 +25,66 @@ Mock MCP Server - AI-generated mock data based on your **OpenAPI JSON Schema** d
 
 1. **Install the package.** Add mock-mcp as a dev dependency inside your project.
 
-   ```bash
-   npm install -D mock-mcp
-   ```
+```bash
+npm install -D mock-mcp
+# or
+yarn add -D mock-mcp
+# or
+pnpm add -D mock-mcp
+```
 
 2. **Configure the Model Context Protocol server.** For example, Claude Desktop can launch the binary through npx:
 
-   ```json
-   {
-     "mock-mcp": {
-       "command": "npx",
-       "args": ["-y", "mock-mcp@latest"]
-     }
-   }
-   ```
+```json
+{
+  "mock-mcp": {
+    "command": "npx",
+    "args": ["-y", "mock-mcp@latest"]
+  }
+}
+```
 
 3. **Connect from your tests.** Use `connect` to retrieve a mock client and request data for intercepted calls.
 
-   ```ts
-   import { render, screen, fireEvent } from "@testing-library/react";
-   import { connect } from "mock-mcp";
+```ts
+import { render, screen, fireEvent } from "@testing-library/react";
+import { connect } from "mock-mcp";
 
-   const userSchema = {
-     summary: "Fetch the current user",
-     response: {
-       type: "object",
-       required: ["id", "name"],
-       properties: {
-         id: { type: "number" },
-         name: { type: "string" },
-       },
-     },
-   };
+const userSchema = {
+  summary: "Fetch the current user",
+  response: {
+    type: "object",
+    required: ["id", "name"],
+    properties: {
+      id: { type: "number" },
+      name: { type: "string" },
+    },
+  },
+};
 
-   it("example", async () => {
-     const mockClient = await connect();
-     const metadata = {
-       schemaUrl: "https://example.com/openapi.json#/paths/~1user/get",
-       schema: userSchema,
-       instructions: "Respond with a single user described by the schema.",
-     };
+it("example", async () => {
+  const mockClient = await connect();
+  const metadata = {
+    schemaUrl: "https://example.com/openapi.json#/paths/~1user/get",
+    schema: userSchema,
+    instructions: "Respond with a single user described by the schema.",
+  };
 
-     fetchMock.get("/user", () =>
-       mockClient.requestMock("/user", "GET", { metadata })
-     );
+  fetchMock.get("/user", () =>
+    mockClient.requestMock("/user", "GET", { metadata })
+  );
 
-     const result = await fetch("/user");
-     const data = await result.json();
-     expect(data).toEqual({ id: 1, name: "Jane" });
-   }); // 10 minute timeout for AI interaction
-   ```
+  const result = await fetch("/user");
+  const data = await result.json();
+  expect(data).toEqual({ id: 1, name: "Jane" });
+}); // 10 minute timeout for AI interaction
+```
 
 4. **Run with MCP enabled.** Prompt your AI client to run the persistent test command and provide mocks through the tools.
 
-   ```
-   Please run the persistent test: `MOCK_MCP=true npm test test/example.test.tsx` and mock fetch data with mock-mcp
-   ```
+```
+Please run the persistent test: `MOCK_MCP=true npm test test/example.test.tsx` and mock fetch data with mock-mcp
+```
 
 ## Why Mock MCP
 
