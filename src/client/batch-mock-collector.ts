@@ -5,6 +5,8 @@ import {
   type BatchMockRequestMessage,
   type BatchMockResponseMessage,
   type MockRequestDescriptor,
+  type MockResponseDescriptor,
+  type ResolvedMock,
 } from "../types.js";
 import { isEnabled } from "./util.js";
 
@@ -44,6 +46,18 @@ export interface BatchMockCollectorOptions {
    * Optional custom logger. Defaults to `console`.
    */
   logger?: Logger;
+  /**
+   * Interval for WebSocket heartbeats in milliseconds. Set to 0 to disable.
+   *
+   * @default 15000
+   */
+  heartbeatIntervalMs?: number;
+  /**
+   * Automatically attempt to reconnect when the WebSocket closes unexpectedly.
+   *
+   * @default true
+   */
+  enableReconnect?: boolean;
 }
 
 export interface RequestMockOptions {
@@ -54,7 +68,7 @@ export interface RequestMockOptions {
 
 interface PendingRequest {
   request: MockRequestDescriptor;
-  resolve: (data: unknown) => void;
+  resolve: (mock: MockResponseDescriptor) => void;
   reject: (error: Error) => void;
   timeoutId: NodeJS.Timeout;
   completion: Promise<PromiseSettledResult<void>>;
@@ -64,42 +78,46 @@ const DEFAULT_TIMEOUT = 60_000;
 const DEFAULT_BATCH_DEBOUNCE_MS = 0;
 const DEFAULT_MAX_BATCH_SIZE = 50;
 const DEFAULT_PORT = 3002;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
  * Collects HTTP requests issued during a single macrotask and forwards them to
  * the MCP server as a batch for AI-assisted mock generation.
  */
 export class BatchMockCollector {
-  private readonly ws: WebSocket;
+  private ws: WebSocket;
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly queuedRequestIds = new Set<string>();
   private readonly timeout: number;
   private readonly batchDebounceMs: number;
   private readonly maxBatchSize: number;
   private readonly logger: Logger;
+  private readonly heartbeatIntervalMs: number;
+  private readonly enableReconnect: boolean;
+  private readonly port: number;
 
   private batchTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
   private requestIdCounter = 0;
   private closed = false;
 
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
-  private readonly readyPromise: Promise<void>;
+  private readyPromise: Promise<void>;
 
   constructor(options: BatchMockCollectorOptions = {}) {
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
     this.batchDebounceMs = options.batchDebounceMs ?? DEFAULT_BATCH_DEBOUNCE_MS;
     this.maxBatchSize = options.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.logger = options.logger ?? console;
-    const port = options.port ?? DEFAULT_PORT;
+    this.heartbeatIntervalMs =
+      options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.enableReconnect = options.enableReconnect ?? true;
+    this.port = options.port ?? DEFAULT_PORT;
 
-    this.readyPromise = new Promise<void>((resolve, reject) => {
-      this.readyResolve = resolve;
-      this.readyReject = reject;
-    });
-
-    const wsUrl = `ws://localhost:${port}`;
-    this.ws = new WebSocket(wsUrl);
+    this.resetReadyPromise();
+    this.ws = this.createWebSocket();
     this.setupWebSocket();
   }
 
@@ -117,7 +135,7 @@ export class BatchMockCollector {
     endpoint: string,
     method: string,
     options: RequestMockOptions = {}
-  ): Promise<T> {
+  ): Promise<ResolvedMock<T>> {
     if (this.closed) {
       throw new Error("BatchMockCollector has been closed");
     }
@@ -139,7 +157,7 @@ export class BatchMockCollector {
       settleCompletion = resolve;
     });
 
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<ResolvedMock<T>>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.rejectRequest(
           requestId,
@@ -151,9 +169,9 @@ export class BatchMockCollector {
 
       this.pendingRequests.set(requestId, {
         request,
-        resolve: (data) => {
+        resolve: (mock) => {
           settleCompletion({ status: "fulfilled", value: undefined });
-          resolve(data as T);
+          resolve(this.buildResolvedMock<T>(mock));
         },
         reject: (error) => {
           settleCompletion({ status: "rejected", reason: error });
@@ -202,6 +220,14 @@ export class BatchMockCollector {
       clearTimeout(this.batchTimer);
       this.batchTimer = null;
     }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.queuedRequestIds.clear();
 
     const closePromise = new Promise<void>((resolve) => {
@@ -218,6 +244,7 @@ export class BatchMockCollector {
     this.ws.on("open", () => {
       this.logger.log("🔌 Connected to mock MCP WebSocket endpoint");
       this.readyResolve?.();
+      this.startHeartbeat();
     });
 
     this.ws.on("message", (data: RawData) => this.handleMessage(data));
@@ -234,8 +261,77 @@ export class BatchMockCollector {
 
     this.ws.on("close", () => {
       this.logger.warn("🔌 WebSocket connection closed");
+      this.stopHeartbeat();
       this.failAllPending(new Error("WebSocket connection closed"));
+      if (!this.closed && this.enableReconnect) {
+        this.scheduleReconnect();
+      }
     });
+  }
+
+  private createWebSocket() {
+    const wsUrl = `ws://localhost:${this.port}`;
+    return new WebSocket(wsUrl);
+  }
+
+  private resetReadyPromise() {
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
+  }
+
+  private startHeartbeat() {
+    if (this.heartbeatIntervalMs <= 0 || this.heartbeatTimer) {
+      return;
+    }
+
+    let lastPong = Date.now();
+    this.ws.on("pong", () => {
+      lastPong = Date.now();
+    });
+
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastPong > this.heartbeatIntervalMs * 2) {
+        this.logger.warn(
+          "Heartbeat missed; closing socket to trigger reconnect..."
+        );
+        this.ws.close();
+        return;
+      }
+
+      this.ws.ping();
+    }, this.heartbeatIntervalMs);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer || this.closed) {
+      return;
+    }
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.logger.warn("🔄 Reconnecting to mock MCP WebSocket endpoint...");
+      this.stopHeartbeat();
+      this.resetReadyPromise();
+      this.ws = this.createWebSocket();
+      this.setupWebSocket();
+    }, 1_000);
+
+    this.reconnectTimer.unref?.();
   }
 
   private handleMessage(data: RawData) {
@@ -271,7 +367,12 @@ export class BatchMockCollector {
 
     clearTimeout(pending.timeoutId);
     this.pendingRequests.delete(mock.requestId);
-    pending.resolve(mock.data);
+    const resolve = () => pending.resolve(mock);
+    if (mock.delayMs && mock.delayMs > 0) {
+      setTimeout(resolve, mock.delayMs);
+    } else {
+      resolve();
+    }
   }
 
   private enqueueRequest(requestId: string) {
@@ -330,6 +431,18 @@ export class BatchMockCollector {
       `📤 Sending batch with ${requests.length} request(s) to MCP server`
     );
     this.ws.send(JSON.stringify(payload));
+  }
+
+  private buildResolvedMock<T>(
+    mock: MockResponseDescriptor
+  ): ResolvedMock<T> {
+    return {
+      requestId: mock.requestId,
+      data: mock.data as T,
+      status: mock.status,
+      headers: mock.headers,
+      delayMs: mock.delayMs,
+    };
   }
 
   private rejectRequest(requestId: string, error: Error) {

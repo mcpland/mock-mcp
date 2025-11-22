@@ -11,7 +11,8 @@ import {
   type BatchMockCollectorOptions,
   type RequestMockOptions,
 } from "./client/batch-mock-collector.js";
-import { connect, type ConnectOptions } from "./client/connect.js";
+import { connect, type ConnectOptions, type MockClient } from "./client/connect.js";
+import type { ResolvedMock } from "./types.js";
 
 const DEFAULT_PORT = 3002;
 
@@ -81,4 +82,4 @@ export { BatchMockCollector };
 export type { BatchMockCollectorOptions, RequestMockOptions };
 
 export { connect };
-export type { ConnectOptions };
+export type { ConnectOptions, MockClient, ResolvedMock };

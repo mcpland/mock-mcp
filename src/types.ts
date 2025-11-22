@@ -24,6 +24,11 @@ export interface MockResponseDescriptor {
   delayMs?: number;
 }
 
+export interface ResolvedMock<T = unknown>
+  extends Omit<MockResponseDescriptor, "data"> {
+  data: T;
+}
+
 export interface BatchMockRequestMessage {
   type: typeof BATCH_MOCK_REQUEST;
   requests: MockRequestDescriptor[];

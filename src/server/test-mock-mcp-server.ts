@@ -179,14 +179,31 @@ export class TestMockMCPServer {
       throw new Error(`Batch not found: ${batchId}`);
     }
 
-    const missing = mocks.find(
-      (mock) =>
-        !batch.requests.some((request) => request.requestId === mock.requestId)
-    );
+    const expectedIds = new Set(batch.requests.map((request) => request.requestId));
+    const providedIds = new Set<string>();
 
-    if (missing) {
+    const unknownMock = mocks.find((mock) => !expectedIds.has(mock.requestId));
+    if (unknownMock) {
       throw new Error(
-        `Mock data references unknown requestId: ${missing.requestId}`
+        `Mock data references unknown requestId: ${unknownMock.requestId}`
+      );
+    }
+
+    for (const mock of mocks) {
+      if (providedIds.has(mock.requestId)) {
+        throw new Error(
+          `Duplicate mock data provided for requestId: ${mock.requestId}`
+        );
+      }
+      providedIds.add(mock.requestId);
+    }
+
+    const missingIds = Array.from(expectedIds).filter(
+      (requestId) => !providedIds.has(requestId)
+    );
+    if (missingIds.length > 0) {
+      throw new Error(
+        `Missing mock data for requestId(s): ${missingIds.join(", ")}`
       );
     }
 
@@ -312,7 +329,14 @@ export class TestMockMCPServer {
                   properties: {
                     requestId: { type: "string" },
                     data: {
-                      type: "object",
+                      anyOf: [
+                        { type: "object" },
+                        { type: "array" },
+                        { type: "string" },
+                        { type: "number" },
+                        { type: "boolean" },
+                        { type: "null" },
+                      ],
                     },
                     status: {
                       type: "number",
@@ -369,6 +393,13 @@ export class TestMockMCPServer {
     this.clients.add(ws);
 
     ws.on("message", (data) => this.handleClientMessage(ws, data));
+    ws.on("ping", () => {
+      try {
+        ws.pong();
+      } catch (error) {
+        this.logger.warn("Failed to respond to ping:", error);
+      }
+    });
     ws.on("close", () => {
       this.logger.error("🔌 Test process disconnected");
       this.clients.delete(ws);

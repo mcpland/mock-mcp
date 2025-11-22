@@ -110,6 +110,9 @@ describe("BatchMockCollector", () => {
         mocks: message.requests.map((request) => ({
           requestId: request.requestId,
           data: { endpoint: request.endpoint },
+          status: 202,
+          headers: { "x-test": "ok" },
+          delayMs: 5,
         })),
       };
       socket.send(JSON.stringify(response));
@@ -117,8 +120,10 @@ describe("BatchMockCollector", () => {
 
     const [users, orders] = await mockPromise;
     expect(message.requests).toHaveLength(2);
-    expect(users).toEqual({ endpoint: "/api/users" });
-    expect(orders).toEqual({ endpoint: "/api/orders" });
+    expect(users.data).toEqual({ endpoint: "/api/users" });
+    expect(users.status).toBe(202);
+    expect(users.headers).toEqual({ "x-test": "ok" });
+    expect(orders.data).toEqual({ endpoint: "/api/orders" });
 
     await collector.close();
   });
@@ -156,8 +161,8 @@ describe("BatchMockCollector", () => {
     await collector.waitForPendingRequests();
     const [users, orders] = await Promise.all([usersPromise, ordersPromise]);
 
-    expect(users).toEqual({ endpoint: "/api/users" });
-    expect(orders).toEqual({ endpoint: "/api/orders" });
+    expect(users.data).toEqual({ endpoint: "/api/users" });
+    expect(orders.data).toEqual({ endpoint: "/api/orders" });
 
     await collector.close();
   });
@@ -208,6 +213,48 @@ describe("TestMockMCPServer", () => {
     expect(response.batchId).toBe(batch.batchId);
     expect(response.mocks).toHaveLength(2);
     expect(server.getPendingBatches()).toHaveLength(0);
+
+    ws.close();
+    await server.stop();
+  });
+
+  it("rejects partial mock coverage", async () => {
+    const server = new TestMockMCPServer({
+      port: 0,
+      enableMcpTransport: false,
+    });
+
+    await server.start();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+
+    const payload: BatchMockRequestMessage = {
+      type: BATCH_MOCK_REQUEST,
+      requests: [
+        { requestId: "req-1", endpoint: "/api/users", method: "GET" },
+        { requestId: "req-2", endpoint: "/api/orders", method: "GET" },
+      ],
+    };
+
+    ws.send(JSON.stringify(payload));
+
+    const batch = await waitFor(
+      () => (server.getPendingBatches()[0] ? server.getPendingBatches()[0] : undefined),
+    );
+
+    await expect(
+      server.provideMockData({
+        batchId: batch.batchId,
+        mocks: [
+          {
+            requestId: "req-1",
+            data: { ok: true },
+          },
+        ],
+      })
+    ).rejects.toThrow(/Missing mock data/);
+
+    expect(server.getPendingBatches()).toHaveLength(1);
 
     ws.close();
     await server.stop();
