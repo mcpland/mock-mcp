@@ -71,13 +71,13 @@ it("example", async () => {
   };
 
   fetchMock.get("/user", () =>
-    mockClient.requestMock("/user", "GET", { metadata })
+    mockClient.requestMock("/user", "GET", { metadata }) // add mock via mock-mcp
   );
 
   const result = await fetch("/user");
   const data = await result.json();
   expect(data).toEqual({ id: 1, name: "Jane" });
-}); // 10 minute timeout for AI interaction
+}, 10 * 60 * 1000); // 10 minute timeout for AI interaction
 ```
 
 4. **Run with MCP enabled.** Prompt your AI client to run the persistent test command and provide mocks through the tools.
