@@ -1,6 +1,6 @@
 {
   "name": "mock-mcp",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "An MCP server enabling LLMs to write integration tests through live test environment interaction",
   "main": "./dist/connect.cjs",
   "type": "module",
