@@ -56,6 +56,7 @@ interface PendingRequest {
   resolve: (data: unknown) => void;
   reject: (error: Error) => void;
   timeoutId: NodeJS.Timeout;
+  completion: Promise<PromiseSettledResult<void>>;
 }
 
 const DEFAULT_TIMEOUT = 60_000;
@@ -132,10 +133,15 @@ export class BatchMockCollector {
       metadata: options.metadata,
     };
 
+    let settleCompletion!: (result: PromiseSettledResult<void>) => void;
+    const completion = new Promise<PromiseSettledResult<void>>((resolve) => {
+      settleCompletion = resolve;
+    });
+
     return new Promise<T>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(
+        this.rejectRequest(
+          requestId,
           new Error(
             `Mock request timed out after ${this.timeout}ms: ${method} ${endpoint}`
           )
@@ -145,16 +151,38 @@ export class BatchMockCollector {
       this.pendingRequests.set(requestId, {
         request,
         resolve: (data) => {
+          settleCompletion({ status: "fulfilled", value: undefined });
           resolve(data as T);
         },
         reject: (error) => {
+          settleCompletion({ status: "rejected", reason: error });
           reject(error);
         },
         timeoutId,
+        completion,
       });
 
       this.enqueueRequest(requestId);
     });
+  }
+
+  /**
+   * Wait for all requests that are currently pending to settle. Requests
+   * created after this method is called are not included.
+   */
+  async waitForPendingRequests(): Promise<void> {
+    const pendingCompletions = Array.from(this.pendingRequests.values()).map(
+      (pending) => pending.completion
+    );
+
+    const results = await Promise.all(pendingCompletions);
+    const rejected = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+
+    if (rejected) {
+      throw rejected.reason;
+    }
   }
 
   /**

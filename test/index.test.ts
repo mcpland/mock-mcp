@@ -122,6 +122,45 @@ describe("BatchMockCollector", () => {
 
     await collector.close();
   });
+
+  it("waits for pending requests to settle", async () => {
+    wss = new WebSocketServer({ port: 0 });
+    const address = wss.address() as AddressInfo;
+
+    wss.on("connection", (socket) => {
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString()) as BatchMockRequestMessage;
+        setTimeout(() => {
+          const response: BatchMockResponseMessage = {
+            type: BATCH_MOCK_RESPONSE,
+            batchId: "batch-test",
+            mocks: message.requests.map((request) => ({
+              requestId: request.requestId,
+              data: { endpoint: request.endpoint },
+            })),
+          };
+          socket.send(JSON.stringify(response));
+        }, 5);
+      });
+    });
+
+    const collector = await connect({
+      port: address.port,
+      timeout: 1_000,
+      batchDebounceMs: 0,
+    });
+
+    const usersPromise = collector.requestMock("/api/users", "GET");
+    const ordersPromise = collector.requestMock("/api/orders", "GET");
+
+    await collector.waitForPendingRequests();
+    const [users, orders] = await Promise.all([usersPromise, ordersPromise]);
+
+    expect(users).toEqual({ endpoint: "/api/users" });
+    expect(orders).toEqual({ endpoint: "/api/orders" });
+
+    await collector.close();
+  });
 });
 
 describe("TestMockMCPServer", () => {

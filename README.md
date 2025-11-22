@@ -189,6 +189,14 @@ await page.route("**/api/users", async (route) => {
 
 Batch behaviour stays automatic: additional `requestMock` calls issued in the same macrotask are grouped, forwarded, and resolved together.
 
+Need to pause the test until everything in-flight resolves? Call `waitForPendingRequests` to block on the current set of pending requests (anything started after the call is not included):
+
+```ts
+// After routing a few requests
+await mockClient.waitForPendingRequests();
+// Safe to assert on the results produced by the mocked responses
+```
+
 ## Describe Requests with Metadata
 
 `requestMock` accepts an optional third argument (`RequestMockOptions`) that is forwarded without modification to the MCP server. The most important field in that object is `metadata`, which lets the test process describe each request with the exact OpenAPI/JSON Schema fragment, sample payloads, or test context that the AI client needs to build a response.
@@ -261,6 +269,7 @@ The library exports primitives so you can embed the workflow inside bespoke runn
 
 - `TestMockMCPServer` starts and stops the WebSocket plus MCP tooling bridge programmatically.
 - `BatchMockCollector` provides a low-level batching client used directly inside test environments.
+- `BatchMockCollector.waitForPendingRequests()` waits for the currently pending mock requests to settle (resolves when all finish, rejects if any fail).
 - `connect(options)` instantiates `BatchMockCollector` and waits for the WebSocket connection to open.
 
 Each class accepts logger overrides, timeout tweaks, and other ergonomics surfaced in the technical design.
