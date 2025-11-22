@@ -70,9 +70,10 @@ it("example", async () => {
     instructions: "Respond with a single user described by the schema.",
   };
 
-  fetchMock.get("/user", () =>
-    mockClient.requestMock("/user", "GET", { metadata }) // add mock via mock-mcp
-  );
+  fetchMock.get("/user", async () => {
+    const response = await mockClient.requestMock("/user", "GET", { metadata }) // add mock via mock-mcp
+    return response.data
+  });
 
   const result = await fetch("/user");
   const data = await result.json();
@@ -183,7 +184,7 @@ const mockClient = await connect({
 
 await page.route("**/api/users", async (route) => {
   const url = new URL(route.request().url());
-  const data = await mockClient.requestMock(
+  const { data } = await mockClient.requestMock(
     url.pathname,
     route.request().method()
   );
