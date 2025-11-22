@@ -104,7 +104,7 @@ export class BatchMockCollector {
 
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
-  private readyPromise: Promise<void>;
+  private readyPromise: Promise<void> = Promise.resolve();
 
   constructor(options: BatchMockCollectorOptions = {}) {
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
