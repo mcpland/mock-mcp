@@ -4,17 +4,19 @@
 [![npm](https://img.shields.io/npm/v/mock-mcp.svg)](https://www.npmjs.com/package/mock-mcp)
 ![license](https://img.shields.io/npm/l/mock-mcp)
 
-Mock MCP Server - AI-generated mock data based on your **OpenAPI JSON Schema** definitions. The project pairs a WebSocket batch bridge with MCP tooling so Cursor, Claude Desktop, or any compatible client can fulfill intercepted requests in real time, ensuring strict contract compliance.
+Mock MCP Server - AI-generated mock data based on your **OpenAPI JSON Schema** definitions. The project uses a **Daemon + Adapter** architecture that enables multiple MCP clients (Cursor, Claude Desktop, etc.) to run simultaneously without port conflicts, while providing robust claim-based concurrency control for mock batch processing.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
 - [Why Mock MCP](#why-mock-mcp)
 - [What Mock MCP Does](#what-mock-mcp-does)
+- [Architecture](#architecture)
 - [Configure MCP Server](#configure-mcp-server)
 - [Connect From Tests](#connect-from-tests)
 - [Describe Requests with Metadata](#describe-requests-with-metadata)
-- [MCP tools](#mcp-tools)
+- [MCP Tools](#mcp-tools)
+- [CLI Commands](#cli-commands)
 - [Available APIs](#available-apis)
 - [Environment Variables](#environment-variables)
 - [How It Works](#how-it-works)
@@ -33,16 +35,20 @@ yarn add -D mock-mcp
 pnpm add -D mock-mcp
 ```
 
-2. **Configure the Model Context Protocol server.** For example, Claude Desktop can launch the binary through npx:
+2. **Configure the Model Context Protocol server.** Add mock-mcp to your MCP client configuration (Cursor, Claude Desktop, etc.):
 
 ```json
 {
-  "mock-mcp": {
-    "command": "npx",
-    "args": ["-y", "mock-mcp@latest"]
+  "mcpServers": {
+    "mock-mcp": {
+      "command": "npx",
+      "args": ["-y", "mock-mcp", "adapter"]
+    }
   }
 }
 ```
+
+> **Note:** The `adapter` command connects to a shared daemon process that is automatically started when needed. This eliminates port conflicts when running multiple MCP clients simultaneously.
 
 3. **Connect from your tests.** Use `connect` to retrieve a mock client and request data for intercepted calls.
 
@@ -132,53 +138,75 @@ Unlike "hallucinated" mocks, Mock MCP uses your actual **OpenAPI JSON Schema** d
 
 ## What Mock MCP Does
 
-Mock MCP pairs a WebSocket batch bridge with MCP tooling to move intercepted requests from tests to AI helpers and back again.
+Mock MCP uses a **Daemon + Adapter** architecture to move intercepted requests from tests to AI helpers and back again.
 
 - **Schema-aware generation** uses your provided metadata (OpenAPI JSON Schema) to ensure mocks match production behavior.
 - **Batch-aware test client** collects every network interception inside a single macrotask and waits for the full response set.
-- **MCP tooling** exposes `get_pending_batches` and `provide_batch_mock_data` so AI agents understand the waiting requests and push data back.
-- **WebSocket bridge** connects the test runner to the MCP server while hiding transport details from both sides.
+- **Claim-based concurrency** prevents multiple AI clients from racing on the same batch through lease-based locking.
+- **Multi-run isolation** supports concurrent test processes with distinct run IDs.
+- **IPC-based communication** uses Unix Domain Sockets (macOS/Linux) or Named Pipes (Windows) instead of TCP ports, eliminating port conflicts.
 - **Timeouts, TTLs, and cleanup** guard the test runner from stale batches or disconnected clients.
+
+## Architecture
+
+The v0.4.0 release introduces a new **Daemon + Adapter** architecture that fundamentally solves the "multiple MCP clients" problem:
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Test Process  │     │     Daemon      │     │    Adapter      │
+│  (your tests)   │────▶│  (per-project)  │◀────│  (per MCP client)│
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                       │                       │
+        │  WebSocket/IPC        │  JSON-RPC/IPC         │  MCP stdio
+        │                       │                       │
+        ▼                       ▼                       ▼
+   BatchMockCollector     Mock Bridge Daemon      MCP Tools
+   - Auto-discovers       - Manages runs/batches  - claim_next_batch
+   - Sends batches        - Claim/lease control   - provide_batch_mock_data
+   - Receives mocks       - Multi-client safe     - get_status, list_runs
+```
+
+**Key Benefits:**
+
+- Single daemon per project (no per-client server instances)
+- IPC communication
+- Full multi-client support
+- Claim-based concurrency (no race conditions)
+- Auto-discovery (no manual configuration)
 
 ## Configure MCP Server
 
-CLI flags keep the WebSocket bridge and the MCP transports aligned. Use them to adapt the server to your local ports while the Environment Variables section covers per-process overrides:
-
-| Option         | Description                                                        | Default |
-| -------------- | ------------------------------------------------------------------ | ------- |
-| `--port`, `-p` | WebSocket port for test runners                                    | `3002`  |
-| `--no-stdio`   | Disable the MCP stdio transport (useful for local debugging/tests) | enabled |
-
-The CLI installs a SIGINT/SIGTERM handler so `Ctrl+C` shuts everything down cleanly.
-
-**Add the server to MCP clients.** MCP clients such as Cursor or Claude Desktop need an entry in their configuration so they can launch the bridge:
+Add mock-mcp to your MCP client configuration. The adapter automatically discovers or starts the daemon for your project:
 
 ```json
 {
   "mcpServers": {
     "mock-mcp": {
       "command": "npx",
-      "args": ["-y", "mock-mcp@latest"],
-      "env": {
-        "MCP_SERVER_PORT": "3002" // 3002 is the default port
-      }
+      "args": ["-y", "mock-mcp", "adapter"]
     }
   }
 }
 ```
 
-Restart the client and confirm that the `mock-mcp` server exposes two tools.
+**That's it!** The daemon uses IPC (Unix Domain Sockets on macOS/Linux, Named Pipes on Windows) which:
+
+- Eliminates port conflicts between multiple MCP clients
+- Automatically shares state between all adapters in the same project
+- Requires no manual coordination or environment variables
+
+Restart your MCP client and confirm that the `mock-mcp` server exposes the tools (`get_status`, `claim_next_batch`, `provide_batch_mock_data`, etc.).
 
 ## Connect From Tests
 
-Tests call `connect` to spin up a `BatchMockCollector`, intercept HTTP calls, and wait for fulfilled data:
+Tests call `connect` to spin up a `BatchMockCollector` that automatically discovers and connects to the daemon:
 
 ```ts
 // tests/mocks.ts
 import { connect } from "mock-mcp";
 
+// Auto-discovers daemon via IPC
 const mockClient = await connect({
-  port: 3002,
   timeout: 60000,
 });
 
@@ -206,6 +234,8 @@ Need to pause the test until everything in-flight resolves? Call `waitForPending
 await mockClient.waitForPendingRequests();
 // Safe to assert on the results produced by the mocked responses
 ```
+
+**Multiple test processes** can run concurrently - each gets a unique `runId` and their batches are isolated from each other.
 
 ## Describe Requests with Metadata
 
@@ -250,144 +280,202 @@ await mockClient.requestMock("/api/products", "GET", {
 - Keep the metadata JSON-serializable and deterministic; large binary blobs or class instances will be dropped.
 - Reuse helper functions to centralize schema definitions so each test only supplies the endpoint-specific instructions.
 
-## MCP tools
+## MCP Tools
 
-Two tools keep the queue visible to AI agents and deliver mocks back to waiting tests:
+The new architecture provides a richer set of tools with claim-based concurrency control:
 
-| Tool                      | Purpose                                    | Response                                                |
-| ------------------------- | ------------------------------------------ | ------------------------------------------------------- |
-| `get_pending_batches`     | Lists queued batches with request metadata | JSON string (array of `{batchId, timestamp, requests}`) |
-| `provide_batch_mock_data` | Sends mock payloads for a specific batch   | JSON string reporting success                           |
+| Tool                      | Purpose                                         | Input                                      |
+| ------------------------- | ----------------------------------------------- | ------------------------------------------ |
+| `get_status`              | Get daemon status (runs, pending, claimed)      | None                                       |
+| `list_runs`               | List all active test runs                       | None                                       |
+| `claim_next_batch`        | Claim the next pending batch (with lease)       | `{ runId?, leaseMs? }`                     |
+| `get_batch`               | Get details of a specific batch (read-only)     | `{ batchId }`                              |
+| `provide_batch_mock_data` | Provide mock data for a claimed batch           | `{ batchId, claimToken, mocks }`           |
+| `release_batch`           | Release a claimed batch without providing mocks | `{ batchId, claimToken, reason? }`         |
 
-Example payload for `provide_batch_mock_data`:
+### Workflow
+
+The new workflow uses **claim → provide** to prevent race conditions:
+
+1. **Claim a batch** - Call `claim_next_batch` to acquire a lease on a pending batch
+2. **Receive batch details** - Get `batchId`, `claimToken`, and `requests` array
+3. **Generate mocks** - Create mock responses for each request
+4. **Provide mocks** - Call `provide_batch_mock_data` with the claim token
 
 ```jsonc
+// Step 1: Claim
 {
-  "batchId": "batch-3",
-  "mocks": [
-    {
-      "requestId": "req-7",
-      "data": { "users": [{ "id": 1, "name": "Alice" }] }
-    }
-  ]
+  "name": "claim_next_batch",
+  "arguments": { "leaseMs": 30000 }
 }
+// Returns: { "batchId": "batch:abc:1", "claimToken": "xyz", "requests": [...] }
+
+// Step 2: Provide
+{
+  "name": "provide_batch_mock_data",
+  "arguments": {
+    "batchId": "batch:abc:1",
+    "claimToken": "xyz",
+    "mocks": [
+      { "requestId": "req-1", "data": { "id": 1, "name": "Alice" } }
+    ]
+  }
+}
+```
+
+**Lease expiration**: If you don't provide mocks within the lease time (default 30s), the batch is automatically released for another adapter to claim.
+
+## CLI Commands
+
+| Command             | Description                                           |
+| ------------------- | ----------------------------------------------------- |
+| `mock-mcp adapter`  | Start the MCP adapter (default, for MCP clients)      |
+| `mock-mcp daemon`   | Start the daemon process (usually auto-started)       |
+| `mock-mcp status`   | Show daemon status for current project                |
+| `mock-mcp stop`     | Stop the daemon for current project                   |
+| `mock-mcp help`     | Show help                                             |
+| `mock-mcp version`  | Show version                                          |
+
+Example usage:
+
+```bash
+# Check if daemon is running
+mock-mcp status
+
+# Manually stop daemon
+mock-mcp stop
 ```
 
 ## Available APIs
 
 The library exports primitives so you can embed the workflow inside bespoke runners or scripts:
 
-- `TestMockMCPServer` starts and stops the WebSocket plus MCP tooling bridge programmatically.
-- `BatchMockCollector` provides a low-level batching client used directly inside test environments.
-- `BatchMockCollector.waitForPendingRequests()` waits for the currently pending mock requests to settle (resolves when all finish, rejects if any fail).
-- `connect(options)` instantiates `BatchMockCollector` and waits for the WebSocket connection to open.
+### Client APIs
 
-Each class accepts logger overrides, timeout tweaks, and other ergonomics surfaced in the technical design.
+- `connect(options?)` - Creates a `BatchMockCollector` and waits for daemon connection.
+- `BatchMockCollector` - Low-level batching client for test environments.
+- `BatchMockCollector.requestMock(endpoint, method, options?)` - Request mock data for an endpoint.
+- `BatchMockCollector.waitForPendingRequests()` - Wait for pending requests to settle.
+- `BatchMockCollector.getRunId()` - Get the unique run ID for this collector.
+
+### Server APIs
+
+- `MockMcpDaemon` - The daemon process that manages runs and batches.
+- `runAdapter()` - Start the MCP adapter (stdio transport).
+- `DaemonClient` - JSON-RPC client for communicating with the daemon.
+
+### Discovery APIs
+
+- `ensureDaemonRunning(options?)` - Ensure daemon is running, start if needed.
+- `resolveProjectRoot(startDir?)` - Find project root by searching for `.git` or `package.json`.
+- `computeProjectId(projectRoot)` - Compute stable project ID from path.
+
+Each class accepts logger overrides, timeout tweaks, and other ergonomics.
 
 ## Environment Variables
 
-| Variable          | Description                                                                  | Default |
-| ----------------- | ---------------------------------------------------------------------------- | ------- |
-| `MCP_SERVER_PORT` | Overrides the WebSocket port used by both the CLI and any spawned MCP host.  | `3002`  |
-| `MOCK_MCP`        | Enables the test runner hook so intercepted requests are routed to mock-mcp. | unset   |
+| Variable             | Description                                                              | Default            |
+| -------------------- | ------------------------------------------------------------------------ | ------------------ |
+| `MOCK_MCP`           | Enables the test runner hook so intercepted requests are routed to mock-mcp. | unset              |
+| `MOCK_MCP_CACHE_DIR` | Override the cache directory for daemon files (registry, socket, lock). | `~/.cache/mock-mcp`|
 
 ## How It Works
 
-Three collaborating processes share responsibilities while staying loosely coupled:
+The new **Daemon + Adapter** architecture uses four collaborating processes:
 
-| Process          | Responsibility                                        | Technology                               | Communication                              |
-| ---------------- | ----------------------------------------------------- | ---------------------------------------- | ------------------------------------------ |
-| **Test Process** | Executes test cases and intercepts HTTP requests      | Playwright/Puppeteer + WebSocket client  | WebSocket → MCP Server                     |
-| **MCP Server**   | Coordinates batches and forwards data between parties | Node.js + WebSocket server + MCP SDK     | stdio ↔ MCP Client · WebSocket ↔ Test Flow |
-| **MCP Client**   | Uses AI to produce mock data via MCP tools            | Cursor / Claude Desktop / custom clients | MCP protocol → MCP Server                  |
+| Process          | Responsibility                                        | Technology                               | Communication                   |
+| ---------------- | ----------------------------------------------------- | ---------------------------------------- | ------------------------------- |
+| **Test Process** | Executes test cases and intercepts HTTP requests      | Playwright/Puppeteer + BatchMockCollector| WebSocket over IPC → Daemon     |
+| **Daemon**       | Manages runs, batches, claims with lease control      | Node.js + HTTP/WS on Unix socket         | IPC ↔ Test & Adapter            |
+| **Adapter**      | Bridges MCP protocol to daemon RPC                    | Node.js + MCP SDK (stdio)                | stdio ↔ MCP Client, RPC → Daemon|
+| **MCP Client**   | Uses AI to produce mock data via MCP tools            | Cursor / Claude Desktop / custom clients | MCP protocol → Adapter          |
 
-### Data flow sequence clarifies message order
+### Data flow sequence with claim-based concurrency
 
 ```
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│  Test Process    │         │   MCP Server     │         │  MCP Client      │
-│  (Browser Test)  │         │                  │         │     (AI)         │
-└────────┬─────────┘         └────────┬─────────┘         └────────┬─────────┘
-         │                            │                            │
-         │  1. Start Test             │                            │
-         │     page.goto()            │                            │
-         ├───────────────────────────►│                            │
-         │                            │                            │
-         │  2. Trigger concurrent     │                            │
-         │     requests               │                            │
-         │     fetch /api/users       │                            │
-         │     fetch /api/products    │                            │
-         │     fetch /api/orders      │                            │
-         │     (Promises pending)     │                            │
-         │                            │                            │
-         │  3. setTimeout(0) batches  │                            │
-         │     BATCH_MOCK_REQUEST     │                            │
-         │     [req-1, req-2, req-3]  │                            │
-         ├═══════════════════════════►│                            │
-         │                            │                            │
-         │     Test paused...         │  4. Store batch in queue   │
-         │       Awaiting mocks       │     pendingBatches.set()   │
-         │                            │                            │
-         │                            │  5. Wait for MCP Client    │
-         │                            │     to call tools          │
-         │                            │                            │
-         │                            │◄───────────────────────────┤
-         │                            │  6. Tool Call:             │
-         │                            │     get_pending_batches    │
-         │                            │                            │
-         │                            │  7. Return batch info      │
-         │                            ├───────────────────────────►│
-         │                            │  [{batchId, requests}]     │
-         │                            │                            │
-         │                            │        8. AI analyzes      │
-         │                            │           Generates mocks  │
-         │                            │                            │
-         │                            │◄───────────────────────────┤
-         │                            │  9. Tool Call:             │
-         │                            │     provide_batch_mock_data│
-         │                            │     {mocks: [...]}         │
-         │                            │                            │
-         │  10. BATCH_MOCK_RESPONSE   │                            │
-         │      [mock-1, mock-2, ...] │                            │
-         │◄═══════════════════════════┤                            │
-         │                            │                            │
-         │  11. Batch resolve         │                            │
-         │      req-1.resolve()       │                            │
-         │      req-2.resolve()       │                            │
-         │      req-3.resolve()       │                            │
-         │                            │                            │
-         │  12. Test continues        │                            │
-         │      Assertions &          │                            │
-         │      Verification          │                            │
-         │                            │                            │
-         │  13. Test Complete ✓       │                            │
-         ▼                            ▼                            ▼
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│  Test Process    │      │     Daemon       │      │     Adapter      │      │   MCP Client     │
+│  (Browser Test)  │      │  (per-project)   │      │ (per MCP client) │      │      (AI)        │
+└────────┬─────────┘      └────────┬─────────┘      └────────┬─────────┘      └────────┬─────────┘
+         │                         │                         │                         │
+         │  1. Connect via IPC     │                         │                         │
+         │     HELLO_TEST          │                         │                         │
+         ├════════════════════════►│                         │                         │
+         │                         │                         │                         │
+         │  2. HELLO_ACK           │                         │                         │
+         │◄════════════════════════┤                         │                         │
+         │                         │                         │                         │
+         │  3. BATCH_MOCK_REQUEST  │                         │                         │
+         │     [req-1, req-2, ...] │                         │                         │
+         ├════════════════════════►│                         │                         │
+         │                         │                         │                         │
+         │     Test paused...      │  4. Store in pending    │                         │
+         │       Awaiting mocks    │     queue               │                         │
+         │                         │                         │                         │
+         │                         │                         │◄────────────────────────┤
+         │                         │                         │  5. claim_next_batch    │
+         │                         │                         │                         │
+         │                         │◄────────────────────────┤                         │
+         │                         │  6. RPC: claimNextBatch │                         │
+         │                         │                         │                         │
+         │                         ├────────────────────────►│                         │
+         │                         │  7. {batch, claimToken} │                         │
+         │                         │                         │                         │
+         │                         │                         ├────────────────────────►│
+         │                         │                         │  8. Return batch info   │
+         │                         │                         │                         │
+         │                         │                         │        9. AI generates  │
+         │                         │                         │           mock data     │
+         │                         │                         │                         │
+         │                         │                         │◄────────────────────────┤
+         │                         │                         │  10. provide_batch_     │
+         │                         │                         │      mock_data          │
+         │                         │                         │                         │
+         │                         │◄────────────────────────┤                         │
+         │                         │  11. RPC: provideBatch  │                         │
+         │                         │      + claimToken       │                         │
+         │                         │                         │                         │
+         │  12. BATCH_MOCK_RESULT  │                         │                         │
+         │      [mock-1, mock-2]   │                         │                         │
+         │◄════════════════════════┤                         │                         │
+         │                         │                         │                         │
+         │  13. Resolve promises   │                         │                         │
+         │      Test continues     │                         │                         │
+         ▼                         ▼                         ▼                         ▼
 
 Protocol Summary:
 ─────────────────
-- Test Process ←→ MCP Server: WebSocket/IPC
-  Message types: BATCH_MOCK_REQUEST, BATCH_MOCK_RESPONSE
+- Test Process ←→ Daemon: WebSocket over IPC (Unix socket / Named pipe)
+  Message types: HELLO_TEST, BATCH_MOCK_REQUEST, BATCH_MOCK_RESULT
 
-- MCP Server ←→ MCP Client: Stdio/JSON-RPC (MCP Protocol)
-  Tools: get_pending_batches, provide_batch_mock_data
+- Adapter ←→ Daemon: HTTP JSON-RPC over IPC
+  Methods: claimNextBatch, provideBatch, getStatus, listRuns
+
+- MCP Client ←→ Adapter: MCP protocol (stdio)
+  Tools: claim_next_batch, provide_batch_mock_data, get_status, list_runs
 
 Key Features:
 ──────────────
-✓ Batch processing of concurrent requests
-✓ Non-blocking test execution during AI mock generation
-✓ Real-time mock data generation by AI
-✓ Automatic promise resolution after mock provision
+✓ uses IPC instead of TCP - No port conflicts
+✓ Multi-client support - multiple MCP clients can run simultaneously
+✓ Claim-based concurrency - prevents race conditions on batches
+✓ Lease expiration - auto-recovery if adapter crashes
+✓ Multi-run isolation - concurrent test processes are isolated
+✓ Auto-discovery - no manual configuration needed
 ```
 
 ## Use the development scripts
 
 ```bash
-pnpm test        # runs Vitest suites
-pnpm dev         # tsx watch mode for the CLI
-pnpm lint        # eslint --ext .ts
+yarn test              # runs Vitest suites
+yarn test:concurrency  # runs concurrency tests specifically
+yarn dev               # tsx watch mode for the CLI
+yarn dev:adapter       # tsx watch mode for adapter
+yarn lint              # eslint --ext .ts
+yarn build             # compile TypeScript
 ```
 
-Vitest suites spin up ephemeral WebSocket servers, so avoid running them concurrently with an already running instance on the same port.
+Tests create isolated daemon instances with temporary cache directories, so they can run safely without affecting your development environment.
 
 ## License
 

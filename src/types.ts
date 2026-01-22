@@ -1,5 +1,10 @@
-export const BATCH_MOCK_REQUEST = "BATCH_MOCK_REQUEST" as const;
-export const BATCH_MOCK_RESPONSE = "BATCH_MOCK_RESPONSE" as const;
+/**
+ * Core types for mock-mcp.
+ */
+
+// =============================================================================
+// Core Types
+// =============================================================================
 
 /**
  * Shape of a mock request emitted by the test process.
@@ -24,30 +29,10 @@ export interface MockResponseDescriptor {
   delayMs?: number;
 }
 
+/**
+ * Resolved mock with typed data.
+ */
 export interface ResolvedMock<T = unknown>
   extends Omit<MockResponseDescriptor, "data"> {
   data: T;
-}
-
-export interface BatchMockRequestMessage {
-  type: typeof BATCH_MOCK_REQUEST;
-  requests: MockRequestDescriptor[];
-}
-
-export interface BatchMockResponseMessage {
-  type: typeof BATCH_MOCK_RESPONSE;
-  batchId: string;
-  mocks: MockResponseDescriptor[];
-}
-
-export interface PendingBatchSummary {
-  batchId: string;
-  timestamp: string;
-  requestCount: number;
-  requests: MockRequestDescriptor[];
-}
-
-export interface ProvideBatchMockDataArgs {
-  batchId: string;
-  mocks: MockResponseDescriptor[];
 }

@@ -1,11 +1,45 @@
 {
   "name": "mock-mcp",
-  "version": "0.3.1",
+  "version": "0.5.0",
   "description": "An MCP server enabling LLMs to write integration tests through live test environment interaction",
-  "main": "./dist/connect.cjs",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "type": "module",
   "bin": {
     "mock-mcp": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./client": {
+      "import": {
+        "types": "./dist/client/index.d.ts",
+        "default": "./dist/client/index.js"
+      },
+      "require": {
+        "types": "./dist/client/index.d.cts",
+        "default": "./dist/client/index.cjs"
+      }
+    },
+    "./connect": {
+      "import": {
+        "types": "./dist/client/connect.d.ts",
+        "default": "./dist/client/connect.js"
+      },
+      "require": {
+        "types": "./dist/client/connect.d.cts",
+        "default": "./dist/client/connect.cjs"
+      }
+    }
   },
   "files": [
     "dist"
@@ -17,12 +51,17 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "tsc && tsup src/client/connect.ts --dts",
+    "build": "tsup",
+    "clean": "rimraf dist",
     "start": "node dist/index.js",
+    "start:adapter": "node dist/index.js adapter",
     "dev": "tsx src/index.ts",
+    "dev:adapter": "tsx src/index.ts adapter",
     "lint": "eslint . --ext .ts",
     "test": "vitest run",
     "test:watch": "vitest --watch",
+    "test:concurrency": "vitest run test/concurrency.test.ts",
+    "test:inspector": "vitest run test/inspector-integration.test.ts",
     "prepublishOnly": "npm run build",
     "link": "npm link",
     "unlink": "npm unlink",
@@ -56,6 +95,7 @@
     "commitizen": "^4.3.1",
     "eslint": "^9.31.0",
     "node-fetch": "^3.3.2",
+    "rimraf": "^6.1.2",
     "tsup": "^8.5.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
