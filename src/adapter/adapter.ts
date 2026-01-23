@@ -34,16 +34,6 @@ type Logger = Pick<Console, "log" | "warn" | "error"> & {
 export interface AdapterOptions {
   logger?: Logger;
   version?: string;
-  /**
-   * Optional project root directory. If not provided, the adapter will discover
-   * and operate on ALL active daemons across all projects.
-   *
-   * Note: In most cases, you don't need to set this. The adapter automatically
-   * discovers all running daemons and can claim batches from any of them.
-   *
-   * @deprecated This option is no longer needed. The adapter now works across all projects.
-   */
-  projectRoot?: string;
 }
 
 // =============================================================================

@@ -65,23 +65,12 @@ async function runCli(): Promise<void> {
 // Command: adapter
 // =============================================================================
 
-async function runAdapterCommand(args: string[]): Promise<void> {
+async function runAdapterCommand(_args: string[]): Promise<void> {
   const { runAdapter } = await import("./adapter/adapter.js");
 
-  // Parse arguments (--project-root is now optional and mostly unused)
-  let projectRoot: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--project-root" && args[i + 1]) {
-      projectRoot = args[i + 1];
-      i++;
-    }
-  }
-
-  // The adapter now uses multi-daemon discovery, so projectRoot is optional
-  // If provided, it's passed through for backwards compatibility
-  await runAdapter({ projectRoot });
+  // The adapter now uses multi-daemon discovery across all projects
+  // No configuration needed - it automatically discovers all active daemons
+  await runAdapter();
 }
 
 // =============================================================================
