@@ -4,8 +4,9 @@
  * Each MCP client (Cursor, Claude Desktop, etc.) spawns one Adapter process.
  * The Adapter:
  * - Exposes MCP tools (claim_next_batch, provide_batch_mock_data, get_status)
- * - Connects to the Daemon via IPC
+ * - Discovers and connects to ALL active Daemons via IPC
  * - Does NOT bind any ports (avoids conflicts)
+ * - Works across projects without requiring --project-root
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -15,14 +16,10 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import crypto from "node:crypto";
-import { DaemonClient } from "./daemon-client.js";
-import { ensureDaemonRunning } from "../shared/discovery.js";
+import { MultiDaemonClient, type ExtendedRunInfo, type AggregatedStatusResult } from "./multi-daemon-client.js";
 import type {
   ClaimNextBatchResult,
   ProvideBatchResult,
-  GetStatusResult,
-  ListRunsResult,
   GetBatchResult,
 } from "../shared/protocol.js";
 
@@ -37,6 +34,16 @@ type Logger = Pick<Console, "log" | "warn" | "error"> & {
 export interface AdapterOptions {
   logger?: Logger;
   version?: string;
+  /**
+   * Optional project root directory. If not provided, the adapter will discover
+   * and operate on ALL active daemons across all projects.
+   *
+   * Note: In most cases, you don't need to set this. The adapter automatically
+   * discovers all running daemons and can claim batches from any of them.
+   *
+   * @deprecated This option is no longer needed. The adapter now works across all projects.
+   */
+  projectRoot?: string;
 }
 
 // =============================================================================
@@ -177,16 +184,24 @@ The mocks array must contain exactly one mock for each request in the batch.`,
 
 export async function runAdapter(opts: AdapterOptions = {}): Promise<void> {
   const logger = opts.logger ?? console;
-  const version = opts.version ?? "0.4.0";
+  const version = opts.version ?? "0.5.0";
 
-  // Ensure daemon is running and get connection info
-  logger.error("🔍 Connecting to mock-mcp daemon...");
-  const registry = await ensureDaemonRunning();
+  // Create multi-daemon client that discovers all active daemons
+  logger.error("🔍 Initializing mock-mcp adapter (multi-daemon mode)...");
 
-  const adapterId = crypto.randomUUID();
-  const daemon = new DaemonClient(registry.ipcPath, registry.token, adapterId);
+  const multiDaemon = new MultiDaemonClient({ logger });
 
-  logger.error(`✅ Connected to daemon (project: ${registry.projectId})`);
+  // Discover active daemons
+  const daemons = await multiDaemon.discoverDaemons();
+  if (daemons.length > 0) {
+    logger.error(`✅ Found ${daemons.length} active daemon(s):`);
+    for (const d of daemons) {
+      const status = d.healthy ? "healthy" : "unhealthy";
+      logger.error(`   - ${d.registry.projectId}: ${d.registry.projectRoot} (${status})`);
+    }
+  } else {
+    logger.error("ℹ️  No active daemons found. Waiting for test processes to start...");
+  }
 
   // Create MCP server
   const server = new Server(
@@ -211,17 +226,17 @@ export async function runAdapter(opts: AdapterOptions = {}): Promise<void> {
     try {
       switch (name) {
         case "get_status": {
-          const result = await daemon.getStatus();
-          return buildToolResponse(formatStatus(result));
+          const result = await multiDaemon.getAggregatedStatus();
+          return buildToolResponse(formatAggregatedStatus(result));
         }
 
         case "list_runs": {
-          const result = await daemon.listRuns();
-          return buildToolResponse(formatRuns(result));
+          const result = await multiDaemon.listAllRuns();
+          return buildToolResponse(formatExtendedRuns(result));
         }
 
         case "claim_next_batch": {
-          const result = await daemon.claimNextBatch({
+          const result = await multiDaemon.claimNextBatch({
             runId: args?.runId as string | undefined,
             leaseMs: args?.leaseMs as number | undefined,
           });
@@ -232,7 +247,10 @@ export async function runAdapter(opts: AdapterOptions = {}): Promise<void> {
           if (!args?.batchId) {
             throw new Error("batchId is required");
           }
-          const result = await daemon.getBatch(args.batchId as string);
+          const result = await multiDaemon.getBatch(args.batchId as string);
+          if (!result) {
+            throw new Error(`Batch not found: ${args.batchId}`);
+          }
           return buildToolResponse(formatBatch(result));
         }
 
@@ -240,10 +258,10 @@ export async function runAdapter(opts: AdapterOptions = {}): Promise<void> {
           if (!args?.batchId || !args?.claimToken || !args?.mocks) {
             throw new Error("batchId, claimToken, and mocks are required");
           }
-          const result = await daemon.provideBatch({
+          const result = await multiDaemon.provideBatch({
             batchId: args.batchId as string,
             claimToken: args.claimToken as string,
-            mocks: args.mocks as Parameters<typeof daemon.provideBatch>[0]["mocks"],
+            mocks: args.mocks as Parameters<typeof multiDaemon.provideBatch>[0]["mocks"],
           });
           return buildToolResponse(formatProvideResult(result));
         }
@@ -252,7 +270,7 @@ export async function runAdapter(opts: AdapterOptions = {}): Promise<void> {
           if (!args?.batchId || !args?.claimToken) {
             throw new Error("batchId and claimToken are required");
           }
-          const result = await daemon.releaseBatch({
+          const result = await multiDaemon.releaseBatch({
             batchId: args.batchId as string,
             claimToken: args.claimToken as string,
             reason: args?.reason as string | undefined,
@@ -265,7 +283,7 @@ export async function runAdapter(opts: AdapterOptions = {}): Promise<void> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error(`Tool error (${name}):`, message);
+      logger.error(`Tool error (${name}): ${message}`);
       return buildToolResponse(`Error: ${message}`, true);
     }
   });
@@ -288,42 +306,38 @@ function buildToolResponse(text: string, isError = false): CallToolResult {
   };
 }
 
-function formatStatus(status: GetStatusResult): string {
-  return `# Mock MCP Daemon Status
+function formatAggregatedStatus(status: AggregatedStatusResult): string {
+  if (status.daemons.length === 0) {
+    return `# Mock MCP Status
 
-- **Version**: ${status.version}
-- **Project ID**: ${status.projectId}
-- **Project Root**: ${status.projectRoot}
-- **PID**: ${status.pid}
-- **Uptime**: ${Math.round(status.uptime / 1000)}s
-
-## Batches
-- **Pending**: ${status.pending}
-- **Claimed**: ${status.claimed}
-- **Active Runs**: ${status.runs}
+No active daemons found. Start a test with \`MOCK_MCP=1\` to begin.
 `;
-}
-
-function formatRuns(result: ListRunsResult): string {
-  if (result.runs.length === 0) {
-    return "No active test runs.";
   }
 
-  const lines = ["# Active Test Runs\n"];
+  const lines = [
+    "# Mock MCP Status\n",
+    "## Summary",
+    `- **Active Daemons**: ${status.daemons.filter(d => d.healthy).length}`,
+    `- **Total Active Runs**: ${status.totalRuns}`,
+    `- **Total Pending Batches**: ${status.totalPending}`,
+    `- **Total Claimed Batches**: ${status.totalClaimed}`,
+    "",
+    "## Daemons\n",
+  ];
 
-  for (const run of result.runs) {
-    lines.push(`## Run: ${run.runId}`);
-    lines.push(`- **PID**: ${run.pid}`);
-    lines.push(`- **CWD**: ${run.cwd}`);
-    lines.push(`- **Started**: ${run.startedAt}`);
-    lines.push(`- **Pending Batches**: ${run.pendingBatches}`);
-    if (run.testMeta) {
-      if (run.testMeta.testFile) {
-        lines.push(`- **Test File**: ${run.testMeta.testFile}`);
-      }
-      if (run.testMeta.testName) {
-        lines.push(`- **Test Name**: ${run.testMeta.testName}`);
-      }
+  for (const daemon of status.daemons) {
+    const healthIcon = daemon.healthy ? "✅" : "❌";
+    lines.push(`### ${healthIcon} ${daemon.projectRoot}`);
+    lines.push(`- **Project ID**: ${daemon.projectId}`);
+    lines.push(`- **Version**: ${daemon.version}`);
+    lines.push(`- **PID**: ${daemon.pid}`);
+    if (daemon.healthy) {
+      lines.push(`- **Uptime**: ${Math.round(daemon.uptime / 1000)}s`);
+      lines.push(`- **Runs**: ${daemon.runs}`);
+      lines.push(`- **Pending**: ${daemon.pending}`);
+      lines.push(`- **Claimed**: ${daemon.claimed}`);
+    } else {
+      lines.push(`- **Status**: Not responding`);
     }
     lines.push("");
   }
@@ -331,9 +345,50 @@ function formatRuns(result: ListRunsResult): string {
   return lines.join("\n");
 }
 
-function formatClaimResult(result: ClaimNextBatchResult | null): string {
+function formatExtendedRuns(runs: ExtendedRunInfo[]): string {
+  if (runs.length === 0) {
+    return "No active test runs.\n\nStart a test with `MOCK_MCP=1` to begin.";
+  }
+
+  const lines = ["# Active Test Runs\n"];
+
+  // Group by project
+  const byProject = new Map<string, ExtendedRunInfo[]>();
+  for (const run of runs) {
+    const key = run.projectRoot;
+    if (!byProject.has(key)) {
+      byProject.set(key, []);
+    }
+    byProject.get(key)!.push(run);
+  }
+
+  for (const [projectRoot, projectRuns] of byProject) {
+    lines.push(`## Project: ${projectRoot}\n`);
+
+    for (const run of projectRuns) {
+      lines.push(`### Run: ${run.runId}`);
+      lines.push(`- **PID**: ${run.pid}`);
+      lines.push(`- **CWD**: ${run.cwd}`);
+      lines.push(`- **Started**: ${run.startedAt}`);
+      lines.push(`- **Pending Batches**: ${run.pendingBatches}`);
+      if (run.testMeta) {
+        if (run.testMeta.testFile) {
+          lines.push(`- **Test File**: ${run.testMeta.testFile}`);
+        }
+        if (run.testMeta.testName) {
+          lines.push(`- **Test Name**: ${run.testMeta.testName}`);
+        }
+      }
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatClaimResult(result: (ClaimNextBatchResult & { projectId: string; projectRoot: string }) | null): string {
   if (!result) {
-    return "No pending batches available to claim.";
+    return "No pending batches available to claim.\n\nMake sure a test is running with `MOCK_MCP=1` and has pending mock requests.";
   }
 
   const lines = [
@@ -341,6 +396,7 @@ function formatClaimResult(result: ClaimNextBatchResult | null): string {
     `**Batch ID**: \`${result.batchId}\``,
     `**Claim Token**: \`${result.claimToken}\``,
     `**Run ID**: ${result.runId}`,
+    `**Project**: ${result.projectRoot}`,
     `**Lease Until**: ${new Date(result.leaseUntil).toISOString()}`,
     "",
     "## Requests\n",

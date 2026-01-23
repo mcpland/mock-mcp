@@ -65,9 +65,23 @@ async function runCli(): Promise<void> {
 // Command: adapter
 // =============================================================================
 
-async function runAdapterCommand(_args: string[]): Promise<void> {
+async function runAdapterCommand(args: string[]): Promise<void> {
   const { runAdapter } = await import("./adapter/adapter.js");
-  await runAdapter();
+
+  // Parse arguments (--project-root is now optional and mostly unused)
+  let projectRoot: string | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--project-root" && args[i + 1]) {
+      projectRoot = args[i + 1];
+      i++;
+    }
+  }
+
+  // The adapter now uses multi-daemon discovery, so projectRoot is optional
+  // If provided, it's passed through for backwards compatibility
+  await runAdapter({ projectRoot });
 }
 
 // =============================================================================
@@ -304,6 +318,8 @@ USAGE:
 COMMANDS:
   adapter     Start the MCP adapter (default)
               This is what you configure in your MCP client.
+              The adapter automatically discovers ALL active daemons
+              across all projects - no configuration needed!
 
   daemon      Start the daemon process
               Usually auto-started by adapter/test code.
@@ -318,6 +334,7 @@ COMMANDS:
 
 EXAMPLES:
   # In your MCP client configuration (Cursor, Claude Desktop, etc.):
+  # Simple configuration - works across all projects automatically!
   {
     "mcpServers": {
       "mock-mcp": {
@@ -332,6 +349,11 @@ EXAMPLES:
 
   # Stop daemon:
   mock-mcp stop
+
+HOW IT WORKS:
+  1. Run your tests with MOCK_MCP=1 to start a daemon and make mock requests
+  2. The MCP adapter discovers all active daemons automatically
+  3. Use list_runs/claim_next_batch tools from any MCP client to provide mocks
 
 ENVIRONMENT:
   MOCK_MCP=1              Enable mock generation in test code
@@ -377,7 +399,15 @@ if (isCliExecution) {
 
 // Server exports (for programmatic use)
 export { MockMcpDaemon, type MockMcpDaemonOptions } from "./daemon/daemon.js";
-export { runAdapter, type AdapterOptions, DaemonClient } from "./adapter/index.js";
+export {
+  runAdapter,
+  type AdapterOptions,
+  DaemonClient,
+  MultiDaemonClient,
+  type MultiDaemonClientOptions,
+  type ExtendedRunInfo,
+  type AggregatedStatusResult,
+} from "./adapter/index.js";
 
 // Client exports
 export {
@@ -392,7 +422,12 @@ export {
   ensureDaemonRunning,
   resolveProjectRoot,
   computeProjectId,
+  discoverAllDaemons,
+  readGlobalIndex,
+  cleanupGlobalIndex,
   type DaemonRegistry,
+  type ActiveDaemonEntry,
+  type ActiveDaemonsIndex,
 } from "./shared/discovery.js";
 
 // Type exports

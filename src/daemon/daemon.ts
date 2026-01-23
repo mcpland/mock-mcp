@@ -18,7 +18,10 @@ import {
   getPaths,
   computeProjectId,
   writeRegistry,
+  registerDaemonGlobally,
+  unregisterDaemonGlobally,
   type DaemonRegistry,
+  type ActiveDaemonEntry,
 } from "../shared/discovery.js";
 import {
   HELLO_TEST,
@@ -195,6 +198,18 @@ export class MockMcpDaemon {
     };
     await writeRegistry(registryPath, registry);
 
+    // Register in global index for cross-project discovery
+    const globalEntry: ActiveDaemonEntry = {
+      projectId,
+      projectRoot: this.opts.projectRoot,
+      ipcPath,
+      registryPath,
+      pid: process.pid,
+      startedAt: registry.startedAt,
+      version: this.opts.version,
+    };
+    await registerDaemonGlobally(globalEntry, this.opts.cacheDir);
+
     // Start sweep timer
     this.sweepTimer = setInterval(() => this.sweepExpiredClaims(), this.opts.sweepIntervalMs);
     this.sweepTimer.unref?.();
@@ -234,6 +249,10 @@ export class MockMcpDaemon {
 
     this.batches.clear();
     this.pendingQueue.length = 0;
+
+    // Unregister from global index
+    const projectId = computeProjectId(this.opts.projectRoot);
+    await unregisterDaemonGlobally(projectId, this.opts.cacheDir);
 
     this.logger.error("👋 Daemon stopped");
   }

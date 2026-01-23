@@ -1,6 +1,6 @@
 {
   "name": "mock-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "An MCP server enabling LLMs to write integration tests through live test environment interaction",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -94,6 +94,7 @@
     "@vitest/coverage-v8": "^3.2.4",
     "commitizen": "^4.3.1",
     "eslint": "^9.31.0",
+    "fetch-mock": "^12.6.0",
     "node-fetch": "^3.3.2",
     "rimraf": "^6.1.2",
     "tsup": "^8.5.0",

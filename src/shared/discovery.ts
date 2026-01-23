@@ -72,6 +72,35 @@ export interface EnsureDaemonOptions {
 // =============================================================================
 
 /**
+ * Check if a directory contains .git or package.json (valid project markers).
+ */
+function hasValidProjectMarker(dir: string): boolean {
+  try {
+    const gitPath = path.join(dir, ".git");
+    try {
+      const stat = fssync.statSync(gitPath);
+      if (stat.isDirectory() || stat.isFile()) {
+        return true;
+      }
+    } catch {
+      // Ignore
+    }
+
+    const pkgPath = path.join(dir, "package.json");
+    try {
+      fssync.accessSync(pkgPath, fssync.constants.F_OK);
+      return true;
+    } catch {
+      // Ignore
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolve the project root by searching upward for .git or package.json.
  * Falls back to the starting directory if nothing is found.
  */
@@ -373,7 +402,35 @@ export function getDaemonEntryPath(): string {
 export async function ensureDaemonRunning(
   opts: EnsureDaemonOptions = {}
 ): Promise<DaemonRegistry> {
-  const projectRoot = opts.projectRoot ?? resolveProjectRoot();
+  let projectRoot = opts.projectRoot ?? resolveProjectRoot();
+
+  // Validate projectRoot - if it doesn't contain .git or package.json, try to find the real project root
+  if (!hasValidProjectMarker(projectRoot)) {
+    const resolved = resolveProjectRoot(projectRoot);
+    if (resolved !== projectRoot && hasValidProjectMarker(resolved)) {
+      // Found a better path - use it
+      debugLog(`Warning: projectRoot "${projectRoot}" doesn't contain .git/package.json, using "${resolved}" instead`);
+      console.error(`[mock-mcp] Warning: projectRoot "${projectRoot}" doesn't look like a project root`);
+      console.error(`[mock-mcp]   Found .git/package.json at: "${resolved}"`);
+      projectRoot = resolved;
+    } else {
+      // Could not find a valid project root - warn loudly
+      debugLog(`Warning: projectRoot "${projectRoot}" doesn't contain .git/package.json and no valid project found`);
+      console.error(`[mock-mcp] ⚠️  WARNING: Could not find a valid project root!`);
+      console.error(`[mock-mcp]   Current path: "${projectRoot}"`);
+      console.error(`[mock-mcp]   This path doesn't contain .git or package.json.`);
+      console.error(`[mock-mcp]   This may cause project mismatch issues.`);
+      console.error(`[mock-mcp]   `);
+      console.error(`[mock-mcp]   For MCP adapters, please specify --project-root explicitly:`);
+      console.error(`[mock-mcp]     mock-mcp adapter --project-root /path/to/your/project`);
+      console.error(`[mock-mcp]   `);
+      console.error(`[mock-mcp]   In your MCP client config (Cursor, Claude Desktop, etc.):`);
+      console.error(`[mock-mcp]   {`);
+      console.error(`[mock-mcp]     "args": ["-y", "mock-mcp", "adapter", "--project-root", "/path/to/your/project"]`);
+      console.error(`[mock-mcp]   }`);
+    }
+  }
+
   const projectId = computeProjectId(projectRoot);
   const { base, registryPath, lockPath, ipcPath } = getPaths(
     projectId,
@@ -522,6 +579,163 @@ export async function ensureDaemonRunning(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// =============================================================================
+// Global Daemon Registry
+// =============================================================================
+
+/**
+ * Entry in the global active daemons index.
+ */
+export interface ActiveDaemonEntry {
+  projectId: string;
+  projectRoot: string;
+  ipcPath: string;
+  registryPath: string;
+  pid: number;
+  startedAt: string;
+  version: string;
+}
+
+/**
+ * Global index of all active daemons.
+ */
+export interface ActiveDaemonsIndex {
+  daemons: ActiveDaemonEntry[];
+  updatedAt: string;
+}
+
+/**
+ * Get the path to the global active daemons index file.
+ */
+export function getGlobalIndexPath(cacheDir?: string): string {
+  const base = path.join(getCacheDir(cacheDir), "mock-mcp");
+  return path.join(base, "active-daemons.json");
+}
+
+/**
+ * Read the global active daemons index.
+ */
+export async function readGlobalIndex(
+  cacheDir?: string
+): Promise<ActiveDaemonsIndex> {
+  const indexPath = getGlobalIndexPath(cacheDir);
+  try {
+    const txt = await fs.readFile(indexPath, "utf-8");
+    return JSON.parse(txt) as ActiveDaemonsIndex;
+  } catch {
+    return { daemons: [], updatedAt: new Date().toISOString() };
+  }
+}
+
+/**
+ * Write the global active daemons index.
+ */
+export async function writeGlobalIndex(
+  index: ActiveDaemonsIndex,
+  cacheDir?: string
+): Promise<void> {
+  const indexPath = getGlobalIndexPath(cacheDir);
+  const base = path.dirname(indexPath);
+  await fs.mkdir(base, { recursive: true });
+  await fs.writeFile(indexPath, JSON.stringify(index, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+}
+
+/**
+ * Register a daemon in the global index.
+ * Called when a daemon starts.
+ */
+export async function registerDaemonGlobally(
+  entry: ActiveDaemonEntry,
+  cacheDir?: string
+): Promise<void> {
+  const index = await readGlobalIndex(cacheDir);
+
+  // Remove any existing entry for this projectId
+  index.daemons = index.daemons.filter((d) => d.projectId !== entry.projectId);
+
+  // Add the new entry
+  index.daemons.push(entry);
+  index.updatedAt = new Date().toISOString();
+
+  await writeGlobalIndex(index, cacheDir);
+  debugLog(`Registered daemon ${entry.projectId} in global index`);
+}
+
+/**
+ * Unregister a daemon from the global index.
+ * Called when a daemon stops.
+ */
+export async function unregisterDaemonGlobally(
+  projectId: string,
+  cacheDir?: string
+): Promise<void> {
+  const index = await readGlobalIndex(cacheDir);
+  index.daemons = index.daemons.filter((d) => d.projectId !== projectId);
+  index.updatedAt = new Date().toISOString();
+  await writeGlobalIndex(index, cacheDir);
+  debugLog(`Unregistered daemon ${projectId} from global index`);
+}
+
+/**
+ * Clean up stale entries from the global index.
+ * Removes entries where the daemon is no longer running.
+ */
+export async function cleanupGlobalIndex(cacheDir?: string): Promise<void> {
+  const index = await readGlobalIndex(cacheDir);
+  const validDaemons: ActiveDaemonEntry[] = [];
+
+  for (const entry of index.daemons) {
+    // Check if the daemon is still alive
+    try {
+      process.kill(entry.pid, 0); // Signal 0 just checks if process exists
+      // Also do a quick health check
+      const healthy = await healthCheck(entry.ipcPath, 1000);
+      if (healthy) {
+        validDaemons.push(entry);
+      } else {
+        debugLog(`Removing unhealthy daemon ${entry.projectId} (pid ${entry.pid})`);
+      }
+    } catch {
+      // Process doesn't exist
+      debugLog(`Removing dead daemon ${entry.projectId} (pid ${entry.pid})`);
+    }
+  }
+
+  if (validDaemons.length !== index.daemons.length) {
+    index.daemons = validDaemons;
+    index.updatedAt = new Date().toISOString();
+    await writeGlobalIndex(index, cacheDir);
+  }
+}
+
+/**
+ * Discover all active daemons.
+ * Returns list of daemons with their connection info.
+ */
+export async function discoverAllDaemons(
+  cacheDir?: string
+): Promise<{ registry: DaemonRegistry; healthy: boolean }[]> {
+  // First, clean up stale entries
+  await cleanupGlobalIndex(cacheDir);
+
+  const index = await readGlobalIndex(cacheDir);
+  const results: { registry: DaemonRegistry; healthy: boolean }[] = [];
+
+  for (const entry of index.daemons) {
+    // Read the full registry for this daemon
+    const registry = await readRegistry(entry.registryPath);
+    if (registry) {
+      const healthy = await healthCheck(entry.ipcPath, 2000);
+      results.push({ registry, healthy });
+    }
+  }
+
+  return results;
 }
 
 // =============================================================================

@@ -10,6 +10,7 @@
  */
 
 import http from "node:http";
+import fssync from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -209,12 +210,21 @@ export class BatchMockCollector {
 
   /**
    * Resolve projectRoot from options.
-   * Priority: projectRoot > filePath > undefined (auto-detect)
+   * Priority: projectRoot (if valid) > filePath > projectRoot (fallback) > undefined (auto-detect)
+   *
+   * A projectRoot is "valid" if it contains .git or package.json. This prevents
+   * accidentally using a wrong directory (e.g., user's home directory) when the
+   * caller mistakenly passes process.cwd() as projectRoot.
    */
   private resolveProjectRootFromOptions(options: BatchMockCollectorOptions): string | undefined {
-    // If explicit projectRoot is provided, use it
+    // If explicit projectRoot is provided, validate it has .git or package.json
     if (options.projectRoot) {
-      return options.projectRoot;
+      const hasGit = this.hasGitOrPackageJson(options.projectRoot);
+      if (hasGit) {
+        return options.projectRoot;
+      }
+      // projectRoot doesn't look like a valid project root, try filePath first
+      this.logger.warn(`[mock-mcp] Warning: projectRoot "${options.projectRoot}" doesn't contain .git or package.json`);
     }
 
     // If filePath is provided, resolve projectRoot from it
@@ -243,8 +253,44 @@ export class BatchMockCollector {
       return resolved;
     }
 
+    // Fall back to projectRoot even if it doesn't look valid (for backwards compatibility)
+    if (options.projectRoot) {
+      this.logger.warn(`[mock-mcp] Warning: Using projectRoot "${options.projectRoot}" despite missing .git/package.json`);
+      return options.projectRoot;
+    }
+
     // Auto-detect from process.cwd()
     return undefined;
+  }
+
+  /**
+   * Check if a directory contains .git or package.json
+   */
+  private hasGitOrPackageJson(dir: string): boolean {
+    try {
+      const gitPath = path.join(dir, ".git");
+      const pkgPath = path.join(dir, "package.json");
+
+      try {
+        const stat = fssync.statSync(gitPath);
+        if (stat.isDirectory() || stat.isFile()) {
+          return true;
+        }
+      } catch {
+        // Ignore
+      }
+
+      try {
+        fssync.accessSync(pkgPath, fssync.constants.F_OK);
+        return true;
+      } catch {
+        // Ignore
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   /**

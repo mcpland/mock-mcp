@@ -12,9 +12,20 @@ export {
   getDaemonEntryPath,
   ensureDaemonRunning,
   sleep,
+  // Global daemon registry
+  getGlobalIndexPath,
+  readGlobalIndex,
+  writeGlobalIndex,
+  registerDaemonGlobally,
+  unregisterDaemonGlobally,
+  cleanupGlobalIndex,
+  discoverAllDaemons,
+  // Types
   type DaemonRegistry,
   type DaemonPaths,
   type EnsureDaemonOptions,
+  type ActiveDaemonEntry,
+  type ActiveDaemonsIndex,
 } from "./discovery.js";
 
 export {
