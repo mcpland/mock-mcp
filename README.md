@@ -42,7 +42,7 @@ pnpm add -D mock-mcp
   "mcpServers": {
     "mock-mcp": {
       "command": "npx",
-      "args": ["-y", "mock-mcp", "adapter"]
+      "args": ["-y", "mock-mcp@latest", "adapter"]
     }
   }
 }
